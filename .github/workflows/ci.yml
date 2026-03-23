@@ -1,0 +1,63 @@
+name: CI
+
+on:
+  push:
+    branches: [master]
+  pull_request:
+    branches: [master]
+
+jobs:
+  build-plugin:
+    name: Build plugin (Windows / .NET 4.8)
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Setup .NET
+        uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: '8.x'
+
+      - name: Restore C# plugin
+        run: dotnet restore penguinclaw/rhino_plugin/PenguinClaw.csproj
+
+      - name: Build C# plugin
+        run: dotnet build penguinclaw/rhino_plugin/PenguinClaw.csproj -c Release --no-restore
+
+  test:
+    name: Run tests (Linux / net8.0)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Setup .NET
+        uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: '8.x'
+
+      - name: Restore test project
+        run: dotnet restore penguinclaw/PenguinClaw.Tests/PenguinClaw.Tests.csproj
+
+      - name: Run tests
+        run: dotnet test penguinclaw/PenguinClaw.Tests/PenguinClaw.Tests.csproj --no-restore --verbosity normal
+
+  ui:
+    name: Build UI (React)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+          cache: 'npm'
+          cache-dependency-path: penguinclaw/ui/package-lock.json
+
+      - name: Install dependencies
+        run: npm ci
+        working-directory: penguinclaw/ui
+
+      - name: Build React UI
+        run: npm run build
+        working-directory: penguinclaw/ui
