@@ -63,25 +63,42 @@ function PenguinMark({ size = 24, color = "#2563EB", glow = false }) {
 
 // ── Tool call card ───────────────────────────────────────────────────────────
 function ToolCall({ tool }) {
+  const isVision = tool.name === "capture_and_assess";
+  let imageSrc = null;
+  if (isVision && tool.result) {
+    try {
+      const r = JSON.parse(tool.result);
+      if (r.base64) imageSrc = `data:image/png;base64,${r.base64}`;
+    } catch {}
+  }
   return (
     <div style={{
       margin: "4px 0", padding: "6px 10px",
-      background: "rgba(37,99,235,0.05)",
-      border: "1px solid rgba(37,99,235,0.15)",
-      borderLeft: "3px solid #2563EB",
+      background: isVision ? "rgba(147,51,234,0.05)" : "rgba(37,99,235,0.05)",
+      border: `1px solid ${isVision ? "rgba(147,51,234,0.15)" : "rgba(37,99,235,0.15)"}`,
+      borderLeft: `3px solid ${isVision ? "#9333EA" : "#2563EB"}`,
       borderRadius: "4px",
       fontFamily: "monospace", fontSize: "11px",
     }}>
       <div style={{ display: "flex", alignItems: "center", gap: "6px" }}>
-        <span style={{ color: "#2563EB", fontWeight: 700 }}>⚡ {tool.name}</span>
+        <span style={{ color: isVision ? "#9333EA" : "#2563EB", fontWeight: 700 }}>
+          {isVision ? "👁" : "⚡"} {tool.name}
+        </span>
         <span style={{ marginLeft: "auto", color: "#059669", fontSize: "10px" }}>✓</span>
       </div>
       {tool.result && (
         <div style={{ color: "#6B7280", fontSize: "10px", marginTop: "3px",
-          borderTop: "1px solid rgba(37,99,235,0.08)", paddingTop: "3px",
+          borderTop: `1px solid ${isVision ? "rgba(147,51,234,0.08)" : "rgba(37,99,235,0.08)"}`, paddingTop: "3px",
           wordBreak: "break-all" }}>
           → {tool.result.length > 120 ? tool.result.slice(0, 120) + "…" : tool.result}
         </div>
+      )}
+      {imageSrc && (
+        <img src={imageSrc} alt="viewport" style={{
+          marginTop: "6px", maxWidth: "100%", maxHeight: "120px",
+          borderRadius: "4px", border: "1px solid rgba(147,51,234,0.3)",
+          objectFit: "contain",
+        }} />
       )}
     </div>
   );
@@ -139,13 +156,30 @@ function inferCategory(cat, name = "") {
 
 // ── Settings form ─────────────────────────────────────────────────────────────
 function SettingsForm({ onSaved }) {
-  const [provider,   setProvider]   = useState("anthropic");
-  const [apiKey,     setApiKey]     = useState("");
-  const [model,      setModel]      = useState("");
-  const [ollamaUrl,  setOllamaUrl]  = useState("http://localhost:11434");
-  const [saving,     setSaving]     = useState(false);
-  const [msg,        setMsg]        = useState({ type: "", text: "" });
-  const [loaded,     setLoaded]     = useState(false);
+  const [provider,        setProvider]        = useState("anthropic");
+  const [apiKey,          setApiKey]          = useState("");
+  const [model,           setModel]           = useState("");
+  const [ollamaUrl,       setOllamaUrl]       = useState("http://localhost:11434");
+  const [saving,          setSaving]          = useState(false);
+  const [msg,             setMsg]             = useState({ type: "", text: "" });
+  const [loaded,          setLoaded]          = useState(false);
+  const [providerStatus,  setProviderStatus]  = useState(null); // null=unknown, true=ok, false=error
+
+  useEffect(() => {
+    let alive = true;
+    const check = async () => {
+      try {
+        const r = await fetch(`${API_BASE}/health`);
+        const d = await r.json();
+        if (alive) setProviderStatus(!!d.ai_configured);
+      } catch {
+        if (alive) setProviderStatus(false);
+      }
+    };
+    check();
+    const t = setInterval(check, 30000);
+    return () => { alive = false; clearInterval(t); };
+  }, []);
 
   useEffect(() => {
     fetch(`${API_BASE}/settings`)
@@ -256,6 +290,13 @@ function SettingsForm({ onSaved }) {
         />
       </div>
 
+      {/* Provider connection status */}
+      <div style={{ display: "flex", alignItems: "center", gap: "6px", fontSize: "10px", color: "#6B7280" }}>
+        <div style={{ width: 8, height: 8, borderRadius: "50%",
+          background: providerStatus === null ? "#D1D5DB" : providerStatus ? "#059669" : "#DC2626" }} />
+        {providerStatus === null ? "Checking…" : providerStatus ? "Connected" : "Not configured"}
+      </div>
+
       {/* Feedback */}
       {msg.text && (
         <div style={{ fontSize: "10px", textAlign: "center", color: msg.type === "ok" ? "#059669" : "#DC2626" }}>
@@ -298,6 +339,9 @@ export default function PenguinClaw() {
   const [tab, setTab]             = useState("chat");
   const [isTyping, setIsTyping]   = useState(false);
   const [sidebarOpen, setSidebarOpen] = useState(false);
+  const [abortCtrl, setAbortCtrl] = useState(null);
+  const [visionActive, setVisionActive] = useState(false);
+  const [turnStats, setTurnStats] = useState({ turn: 0, inputTokens: 0, outputTokens: 0 });
   const chatEndRef = useRef(null);
 
   useEffect(() => { chatEndRef.current?.scrollIntoView({ behavior: "smooth" }); }, [messages, isTyping]);
@@ -347,22 +391,40 @@ export default function PenguinClaw() {
 
   async function sendMessage() {
     const msg = input.trim();
-    if (!msg) return;
+    if (!msg || isTyping) return;
     setInput("");
     setMessages(p => [...p, { role: "user", text: msg, id: Date.now() }]);
     setIsTyping(true);
+    setVisionActive(false);
+
+    const ctrl = new AbortController();
+    setAbortCtrl(ctrl);
+
     try {
       const r = await fetch(`${API_BASE}/chat`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ message: msg, history }),
+        signal: ctrl.signal,
       });
       const d = await r.json();
       setIsTyping(false);
+      setAbortCtrl(null);
+
+      const hasVision = d.tool_calls?.some(t => t.name === "capture_and_assess");
+      setVisionActive(hasVision || false);
+
       setMessages(p => [...p, {
         role: "agent", tools: d.tool_calls || [],
         text_final: d.response || "", id: Date.now() + 1,
       }]);
+
+      setTurnStats(p => ({
+        turn: p.turn + 1 + (d.tool_calls?.length || 0),
+        inputTokens:  p.inputTokens  + (d.input_tokens  || 0),
+        outputTokens: p.outputTokens + (d.output_tokens || 0),
+      }));
+
       const toolSummary = d.tool_calls?.length
         ? "\n[Tools used: " + d.tool_calls.map(t => t.name).join(", ") + "]"
         : "";
@@ -370,10 +432,20 @@ export default function PenguinClaw() {
         { role: "user",      content: msg },
         { role: "assistant", content: (d.response || "") + toolSummary },
       ]);
-    } catch {
+    } catch (err) {
       setIsTyping(false);
-      setMessages(p => [...p, { role: "agent", text_final: "Could not reach PenguinClaw server.", id: Date.now() + 1 }]);
+      setAbortCtrl(null);
+      if (err.name !== "AbortError") {
+        setMessages(p => [...p, { role: "agent", text_final: "Could not reach PenguinClaw server.", id: Date.now() + 1 }]);
+      }
     }
+  }
+
+  function stopGeneration() {
+    abortCtrl?.abort();
+    fetch(`${API_BASE}/stop`, { method: "POST" }).catch(() => {});
+    setIsTyping(false);
+    setAbortCtrl(null);
   }
 
   const dot = (ok, unknown) => ({
@@ -390,6 +462,7 @@ export default function PenguinClaw() {
         @import url('https://fonts.googleapis.com/css2?family=Space+Grotesk:wght@600;700&family=DM+Sans:wght@400;600;700&family=JetBrains+Mono:wght@400;600&display=swap');
         * { box-sizing: border-box; }
         @keyframes dotBounce { 0%,100%{transform:translateY(0)} 50%{transform:translateY(-3px)} }
+        @keyframes eyeBlink { 0%,100%{transform:scaleY(1)} 40%{transform:scaleY(0.1)} }
         ::-webkit-scrollbar { width: 3px; }
         ::-webkit-scrollbar-thumb { background: rgba(37,99,235,0.2); border-radius: 2px; }
         select, input, textarea { color-scheme: light; }
@@ -457,9 +530,17 @@ export default function PenguinClaw() {
                 <>
                   {messages.map(m => <Message key={m.id} msg={m} />)}
                   {isTyping && (
-                    <div style={{ display: "flex", gap: "4px", alignItems: "center", padding: "6px 0" }}>
-                      <PenguinMark size={16} color="#2563EB" />
-                      {[0,1,2].map(i => <div key={i} style={{ width: 4, height: 4, borderRadius: "50%", background: "#2563EB", animation: `dotBounce 0.8s ease-in-out ${i*0.15}s infinite` }} />)}
+                    <div style={{ display: "flex", flexDirection: "column", gap: "2px", padding: "6px 0" }}>
+                      <div style={{ display: "flex", gap: "4px", alignItems: "center" }}>
+                        <PenguinMark size={16} color="#2563EB" />
+                        {[0,1,2].map(i => <div key={i} style={{ width: 4, height: 4, borderRadius: "50%", background: "#2563EB", animation: `dotBounce 0.8s ease-in-out ${i*0.15}s infinite` }} />)}
+                      </div>
+                      {visionActive && (
+                        <div style={{ display: "flex", alignItems: "center", gap: "4px", fontSize: "10px", color: "#9333EA", paddingLeft: "2px" }}>
+                          <span style={{ animation: "eyeBlink 2s ease-in-out infinite", display: "inline-block" }}>👁</span>
+                          <span>vision</span>
+                        </div>
+                      )}
                     </div>
                   )}
                   <div ref={chatEndRef} />
@@ -468,17 +549,29 @@ export default function PenguinClaw() {
             </div>
 
             {/* Input */}
-            <div style={{ padding: "8px 10px", borderTop: "1px solid #E5E2DB", background: "#FFFFFF", display: "flex", gap: "6px", alignItems: "flex-end", flexShrink: 0 }}>
-              <textarea
-                style={{ flex: 1, background: "#F7F6F2", border: "1px solid #E5E2DB", borderRadius: "8px", padding: "8px 10px", color: "#1A1A2E", fontSize: "12px", fontFamily: "inherit", outline: "none", resize: "none", minHeight: "36px", maxHeight: "90px", lineHeight: 1.5 }}
-                placeholder="Ask PenguinClaw…"
-                value={input}
-                onChange={e => setInput(e.target.value)}
-                onKeyDown={e => { if (e.key === "Enter" && !e.shiftKey) { e.preventDefault(); sendMessage(); } }}
-                rows={1}
-              />
-              <button onClick={sendMessage} style={{ background: "linear-gradient(135deg,#2563EB,#1D4ED8)", border: "none", borderRadius: "7px", padding: "8px 12px", color: "#fff", cursor: "pointer", fontSize: "14px", fontWeight: 700, flexShrink: 0 }}>↑</button>
-              <button onClick={() => { setMessages([]); setHistory([]); }} title="Clear conversation" style={{ background: "none", border: "1px solid #E5E2DB", borderRadius: "7px", padding: "8px 10px", color: "#9CA3AF", cursor: "pointer", fontSize: "12px", flexShrink: 0 }}>✕</button>
+            <div style={{ borderTop: "1px solid #E5E2DB", background: "#FFFFFF", flexShrink: 0 }}>
+              {turnStats.turn > 0 && (
+                <div style={{ fontSize: "9px", color: "#D1D5DB", textAlign: "center", paddingTop: "3px" }}>
+                  Turn {turnStats.turn}
+                  {turnStats.outputTokens > 0 && ` · ~$${((turnStats.inputTokens * 0.00000025 + turnStats.outputTokens * 0.00000125)).toFixed(4)}`}
+                </div>
+              )}
+              <div style={{ padding: "8px 10px", display: "flex", gap: "6px", alignItems: "flex-end" }}>
+                <textarea
+                  style={{ flex: 1, background: "#F7F6F2", border: "1px solid #E5E2DB", borderRadius: "8px", padding: "8px 10px", color: "#1A1A2E", fontSize: "12px", fontFamily: "inherit", outline: "none", resize: "none", minHeight: "36px", maxHeight: "90px", lineHeight: 1.5 }}
+                  placeholder="Ask PenguinClaw…"
+                  value={input}
+                  onChange={e => setInput(e.target.value)}
+                  onKeyDown={e => { if (e.key === "Enter" && !e.shiftKey) { e.preventDefault(); sendMessage(); } }}
+                  rows={1}
+                />
+                {isTyping ? (
+                  <button onClick={stopGeneration} style={{ background: "#DC2626", border: "none", borderRadius: "7px", padding: "8px 12px", color: "#fff", cursor: "pointer", fontSize: "12px", fontWeight: 700, flexShrink: 0 }}>■ Stop</button>
+                ) : (
+                  <button onClick={sendMessage} style={{ background: "linear-gradient(135deg,#2563EB,#1D4ED8)", border: "none", borderRadius: "7px", padding: "8px 12px", color: "#fff", cursor: "pointer", fontSize: "14px", fontWeight: 700, flexShrink: 0 }}>↑</button>
+                )}
+                <button onClick={() => { setMessages([]); setHistory([]); setTurnStats({ turn: 0, inputTokens: 0, outputTokens: 0 }); }} title="Clear conversation" style={{ background: "none", border: "1px solid #E5E2DB", borderRadius: "7px", padding: "8px 10px", color: "#9CA3AF", cursor: "pointer", fontSize: "12px", flexShrink: 0 }}>✕</button>
+              </div>
             </div>
           </>)}
 

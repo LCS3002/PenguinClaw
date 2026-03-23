@@ -473,11 +473,28 @@ namespace PenguinClaw
                 },
                 new JObject
                 {
+                    ["name"]        = "capture_and_assess",
+                    ["description"] = "Captures the active Rhino viewport and injects it as a vision image into the next AI turn. " +
+                                      "Call this after completing a modeling step to visually verify the result before proceeding. " +
+                                      "Returns the file path of the captured image; the image itself is sent to the model automatically.",
+                    ["input_schema"] = new JObject
+                    {
+                        ["type"] = "object",
+                        ["properties"] = new JObject
+                        {
+                            ["prompt"] = new JObject { ["type"] = "string", ["description"] = "Optional: what to look for in the image (e.g. 'verify the boolean union succeeded')." },
+                        },
+                        ["required"] = new JArray(),
+                    },
+                },
+                new JObject
+                {
                     ["name"]        = "build_gh_definition",
                     ["description"] =
                         "Programmatically builds a Grasshopper definition by creating components and wiring them together. " +
                         "Supported types: 'slider' (number slider), 'panel' (text/value panel), 'toggle' (boolean toggle), " +
-                        "'component' (any GH component by name, e.g. 'Box', 'Loft', 'Circle', 'Amplitude'). " +
+                        "'component' (any GH component by name, e.g. 'Box', 'Loft', 'Circle', 'Amplitude'), " +
+                        "'python3' (Python 3 script component), 'sdk' (component by GUID). " +
                         "Wires connect component outputs to inputs using 'id:paramIndex' notation (0-based). " +
                         "For sliders/toggles, output index is always 0 — the component itself is the output. " +
                         "Set solve:true to compute the solution after building.",
@@ -496,7 +513,7 @@ namespace PenguinClaw
                                     ["properties"] = new JObject
                                     {
                                         ["id"]             = new JObject { ["type"] = "string",  ["description"] = "Local reference ID used in wires." },
-                                        ["type"]           = new JObject { ["type"] = "string",  ["description"] = "'slider', 'panel', 'toggle', or 'component'." },
+                                        ["type"]           = new JObject { ["type"] = "string",  ["description"] = "'slider', 'panel', 'toggle', 'component', 'python3', or 'sdk'." },
                                         ["name"]           = new JObject { ["type"] = "string",  ["description"] = "Display name / NickName." },
                                         ["value"]          = new JObject { ["type"] = "number",  ["description"] = "Initial value (slider only)." },
                                         ["min"]            = new JObject { ["type"] = "number",  ["description"] = "Minimum value (slider only, default 0)." },
@@ -504,6 +521,10 @@ namespace PenguinClaw
                                         ["text"]           = new JObject { ["type"] = "string",  ["description"] = "Initial text (panel only)." },
                                         ["checked"]        = new JObject { ["type"] = "boolean", ["description"] = "Initial state (toggle only)." },
                                         ["component_name"] = new JObject { ["type"] = "string",  ["description"] = "GH component name to instantiate (component type only), e.g. 'Box', 'Loft', 'Area'." },
+                                        ["code"]           = new JObject { ["type"] = "string",  ["description"] = "Python 3 source code (python3 type only)." },
+                                        ["guid"]           = new JObject { ["type"] = "string",  ["description"] = "Component GUID for SDK lookup (sdk type only)." },
+                                        ["inputs"]         = new JObject { ["type"] = "array",   ["description"] = "Input parameter names (python3 type only).", ["items"] = new JObject { ["type"] = "string" } },
+                                        ["outputs"]        = new JObject { ["type"] = "array",   ["description"] = "Output parameter names (python3 type only).", ["items"] = new JObject { ["type"] = "string" } },
                                     },
                                     ["required"] = new JArray { "id", "type" },
                                 },
@@ -526,6 +547,29 @@ namespace PenguinClaw
                             ["clear_canvas"] = new JObject { ["type"] = "boolean", ["description"] = "Clear existing canvas objects before building (default false)." },
                         },
                         ["required"] = new JArray { "components" },
+                    },
+                },
+                new JObject
+                {
+                    ["name"]        = "solve_gh_definition",
+                    ["description"] = "Triggers a new solution on the active Grasshopper canvas, recomputing all outputs.",
+                    ["input_schema"] = new JObject { ["type"] = "object", ["properties"] = new JObject(), ["required"] = new JArray() },
+                },
+                new JObject
+                {
+                    ["name"]        = "bake_gh_definition",
+                    ["description"] = "Bakes all geometry outputs from the active Grasshopper canvas to a named Rhino layer.",
+                    ["input_schema"] = new JObject
+                    {
+                        ["type"] = "object",
+                        ["properties"] = new JObject
+                        {
+                            ["layer_name"] = new JObject { ["type"] = "string",  ["description"] = "Target layer name for baked objects (created if absent)." },
+                            ["color_r"]    = new JObject { ["type"] = "integer", ["description"] = "Optional red channel (0-255) for baked objects." },
+                            ["color_g"]    = new JObject { ["type"] = "integer", ["description"] = "Optional green channel (0-255)." },
+                            ["color_b"]    = new JObject { ["type"] = "integer", ["description"] = "Optional blue channel (0-255)." },
+                        },
+                        ["required"] = new JArray { "layer_name" },
                     },
                 },
             };
@@ -600,6 +644,13 @@ case "list_gh_sliders":      return ListGhSliders();
                                                   input["components"] as JArray, input["wires"] as JArray,
                                                   input["solve"]?.ToObject<bool>() ?? true,
                                                   input["clear_canvas"]?.ToObject<bool>() ?? false);
+                case "capture_and_assess":    return CaptureAndAssess(S(input, "prompt"));
+                case "solve_gh_definition":   return SolveGhDefinition();
+                case "bake_gh_definition":    return BakeGhDefinition(
+                                                  S(input, "layer_name"),
+                                                  input["color_r"]?.ToObject<int>(),
+                                                  input["color_g"]?.ToObject<int>(),
+                                                  input["color_b"]?.ToObject<int>());
                 default:
                     // Dynamic tools from the registry (rhino_cmd_* and gh_comp_*)
                     if (name.StartsWith("rhino_cmd_") || name.StartsWith("gh_comp_"))
@@ -1449,6 +1500,19 @@ case "list_gh_sliders":      return ListGhSliders();
                         case "toggle":
                             comp = GhMakeToggle(ghAsm, dispName, def["checked"]?.ToObject<bool>() ?? false);
                             break;
+                        case "python3":
+                            comp = GhMakePython3(ghAsm, dispName,
+                                def["code"]?.ToString() ?? "# python3\n",
+                                def["inputs"] as JArray,
+                                def["outputs"] as JArray);
+                            break;
+                        case "sdk":
+                            var guidStr = def["guid"]?.ToString();
+                            if (!string.IsNullOrEmpty(guidStr))
+                                comp = GhMakeComponentByGuid(ghAsm, guidStr);
+                            else
+                                comp = GhMakeComponent(ghAsm, def["component_name"]?.ToString() ?? dispName);
+                            break;
                         default: // "component"
                             var cname = def["component_name"]?.ToString() ?? dispName;
                             comp = GhMakeComponent(ghAsm, cname);
@@ -1524,6 +1588,104 @@ case "list_gh_sliders":      return ListGhSliders();
             });
         }
 
+        private static string CaptureAndAssess(string prompt)
+        {
+            var captureResult = CaptureViewport();
+            JObject parsed;
+            try { parsed = JObject.Parse(captureResult); }
+            catch { return Fail("Failed to capture viewport."); }
+            if (parsed["success"]?.ToObject<bool>() != true)
+                return captureResult;
+
+            var path = parsed["path"]?.ToString();
+            if (string.IsNullOrEmpty(path) || !File.Exists(path))
+                return Fail("Viewport capture file not found.");
+
+            byte[] bytes;
+            try { bytes = File.ReadAllBytes(path); }
+            catch (Exception ex) { return Fail($"Failed to read viewport file: {ex.Message}"); }
+
+            var base64 = Convert.ToBase64String(bytes);
+            return new JObject
+            {
+                ["success"]      = true,
+                ["path"]         = path,
+                ["base64"]       = base64,
+                ["media_type"]   = "image/png",
+                ["prompt"]       = prompt ?? "Describe what you see in the 3D viewport.",
+                ["vision_ready"] = true,
+            }.ToString(Formatting.None);
+        }
+
+        private static string SolveGhDefinition()
+        {
+            return OnMain(() =>
+            {
+                var ghDoc = GetGhDocument();
+                if (ghDoc == null) return new JObject { ["success"] = false, ["message"] = "No active Grasshopper canvas." };
+                ghDoc.GetType().GetMethod("NewSolution", new[] { typeof(bool) })?.Invoke(ghDoc, new object[] { false });
+                return Obj("message", "Grasshopper solution triggered.");
+            });
+        }
+
+        private static string BakeGhDefinition(string layerName, int? r, int? g, int? b)
+        {
+            if (string.IsNullOrEmpty(layerName)) return Fail("layer_name is required.");
+            return OnMain(() =>
+            {
+                var doc = RhinoDoc.ActiveDoc;
+                if (doc == null) return new JObject { ["success"] = false, ["message"] = "No active Rhino document." };
+
+                var ghDoc = GetGhDocument();
+                if (ghDoc == null) return new JObject { ["success"] = false, ["message"] = "No active Grasshopper canvas." };
+
+                // Ensure layer exists
+                if (doc.Layers.FindName(layerName) == null)
+                    doc.Layers.Add(new Rhino.DocObjects.Layer { Name = layerName });
+
+                var targetLayerIndex = doc.Layers.FindName(layerName)?.Index ?? 0;
+                var color = (r.HasValue && g.HasValue && b.HasValue)
+                    ? (System.Drawing.Color?)System.Drawing.Color.FromArgb(r.Value, g.Value, b.Value)
+                    : null;
+
+                try
+                {
+                    var objects = GetGhObjects(ghDoc);
+                    int bakedCount = 0;
+                    foreach (var comp in objects)
+                    {
+                        if (comp == null) continue;
+                        var t = comp.GetType();
+
+                        var bakeMethod = t.GetMethod("BakeGeometry",
+                            System.Reflection.BindingFlags.Public | System.Reflection.BindingFlags.Instance);
+                        if (bakeMethod == null) continue;
+
+                        var attrs = new Rhino.DocObjects.ObjectAttributes();
+                        attrs.LayerIndex = targetLayerIndex;
+                        if (color.HasValue)
+                        {
+                            attrs.ColorSource = Rhino.DocObjects.ObjectColorSource.ColorFromObject;
+                            attrs.ObjectColor = color.Value;
+                        }
+
+                        try
+                        {
+                            bakeMethod.Invoke(comp, new object[] { doc, attrs, new System.Collections.Generic.List<Guid>() });
+                            bakedCount++;
+                        }
+                        catch { }
+                    }
+                    doc.Views.Redraw();
+                    return Obj("message", $"Baked {bakedCount} components to layer '{layerName}'.");
+                }
+                catch (Exception ex)
+                {
+                    return new JObject { ["success"] = false, ["message"] = $"Bake failed: {ex.Message}" };
+                }
+            });
+        }
+
         // ── GH definition builder helpers ────────────────────────────────────────
 
         private static object GhMakeSlider(Assembly ghAsm, string name, double value, double min, double max)
@@ -1591,6 +1753,52 @@ case "list_gh_sliders":      return ListGhSliders();
                 return proxy.GetType()
                     .GetMethod("CreateInstance", BindingFlags.Public | BindingFlags.Instance, null, Type.EmptyTypes, null)
                     ?.Invoke(proxy, null);
+            }
+            catch { return null; }
+        }
+
+        private static object GhMakePython3(Assembly ghAsm, string name, string code, JArray inputs, JArray outputs)
+        {
+            try
+            {
+                var t = ghAsm.GetType("Grasshopper.Kernel.Components.GH_ScriptComponent")
+                     ?? ghAsm.GetType("Grasshopper.Kernel.Special.GH_PythonScript");
+                if (t == null) return null;
+
+                var comp = Activator.CreateInstance(t);
+                if (comp == null) return null;
+
+                var codeProp = t.GetProperty("ScriptSource", BindingFlags.Public | BindingFlags.Instance)
+                            ?? t.GetProperty("Script", BindingFlags.Public | BindingFlags.Instance);
+                if (codeProp != null)
+                    codeProp.SetValue(comp, "#! python3\n" + code);
+
+                return comp;
+            }
+            catch { return null; }
+        }
+
+        private static object GhMakeComponentByGuid(Assembly ghAsm, string guidStr)
+        {
+            try
+            {
+                if (!Guid.TryParse(guidStr, out var guid)) return null;
+                var instances = ghAsm.GetType("Grasshopper.Instances");
+                var server    = instances?.GetProperty("ComponentServer", BindingFlags.Public | BindingFlags.Static)?.GetValue(null);
+                var proxies   = server?.GetType()
+                    .GetProperty("ObjectProxies", BindingFlags.Public | BindingFlags.Instance)
+                    ?.GetValue(server) as System.Collections.IEnumerable;
+                if (proxies == null) return null;
+
+                foreach (var p in proxies)
+                {
+                    var pg = p?.GetType().GetProperty("Guid", BindingFlags.Public | BindingFlags.Instance)?.GetValue(p);
+                    if (pg is Guid g && g == guid)
+                        return p.GetType()
+                            .GetMethod("CreateInstance", BindingFlags.Public | BindingFlags.Instance, null, Type.EmptyTypes, null)
+                            ?.Invoke(p, null);
+                }
+                return null;
             }
             catch { return null; }
         }
