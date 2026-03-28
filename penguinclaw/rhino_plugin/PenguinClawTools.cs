@@ -1779,6 +1779,7 @@ case "list_gh_sliders":      return ListGhSliders();
 
                 // ── Wire connections ─────────────────────────────────────────────
                 int wiresOk = 0, wiresFailed = 0;
+                var wireErrors = new JArray();
                 foreach (var wire in wires ?? new JArray())
                 {
                     var fromStr = wire["from"]?.ToString();
@@ -1787,18 +1788,23 @@ case "list_gh_sliders":      return ListGhSliders();
 
                     var fp = fromStr.Split(':');
                     var tp = toStr.Split(':');
-                    if (fp.Length < 2 || tp.Length < 2) continue;
+                    // Allow "compId" shorthand (no :index) — default to index 0
+                    string fromId = fp[0], toId = tp[0];
+                    int fi = fp.Length >= 2 && int.TryParse(fp[1], out var fii) ? fii : 0;
+                    int ti = tp.Length >= 2 && int.TryParse(tp[1], out var tii) ? tii : 0;
 
-                    if (!compMap.TryGetValue(fp[0], out var fromComp) ||
-                        !compMap.TryGetValue(tp[0], out var toComp)) { wiresFailed++; continue; }
-
-                    int fi = int.TryParse(fp[1], out var fii) ? fii : 0;
-                    int ti = int.TryParse(tp[1], out var tii) ? tii : 0;
+                    if (!compMap.TryGetValue(fromId, out var fromComp))
+                        { wiresFailed++; wireErrors.Add($"'{fromId}' not in compMap (not created?)"); continue; }
+                    if (!compMap.TryGetValue(toId, out var toComp))
+                        { wiresFailed++; wireErrors.Add($"'{toId}' not in compMap (not created?)"); continue; }
 
                     var fromParam = GhGetOutputParam(ghAsm, fromComp, fi);
                     var toParam   = GhGetInputParam(toComp, ti);
 
-                    if (fromParam == null || toParam == null) { wiresFailed++; continue; }
+                    if (fromParam == null)
+                        { wiresFailed++; wireErrors.Add($"'{fromId}' output[{fi}] is null"); continue; }
+                    if (toParam == null)
+                        { wiresFailed++; wireErrors.Add($"'{toId}' input[{ti}] is null (component may have fewer inputs)"); continue; }
 
                     try
                     {
@@ -1807,11 +1813,11 @@ case "list_gh_sliders":      return ListGhSliders();
                         var addSource = toParam.GetType()
                             .GetMethods(BindingFlags.Public | BindingFlags.Instance)
                             .FirstOrDefault(m => m.Name == "AddSource" && m.GetParameters().Length == 1);
-                        if (addSource == null) { wiresFailed++; continue; }
+                        if (addSource == null) { wiresFailed++; wireErrors.Add($"AddSource not found on {toId} input[{ti}]"); continue; }
                         addSource.Invoke(toParam, new[] { fromParam });
                         wiresOk++;
                     }
-                    catch { wiresFailed++; }
+                    catch (Exception ex) { wiresFailed++; wireErrors.Add($"{fromId}→{toId}: {ex.InnerException?.Message ?? ex.Message}"); }
                 }
 
                 // ── Solve ────────────────────────────────────────────────────────
@@ -1821,9 +1827,11 @@ case "list_gh_sliders":      return ListGhSliders();
                 var msg = $"Built GH definition: {compMap.Count}/{components.Count} components";
                 if (wires != null && wires.Count > 0)
                     msg += $", {wiresOk}/{wires.Count} wires connected";
-                if (wiresFailed > 0) msg += $" ({wiresFailed} wires failed — check param indices)";
+                if (wiresFailed > 0) msg += $" ({wiresFailed} wires failed)";
 
-                return Obj("message", msg, "components", created);
+                var result = new JObject { ["message"] = msg, ["components"] = created };
+                if (wireErrors.Count > 0) result["wire_errors"] = wireErrors;
+                return result;
             });
         }
 

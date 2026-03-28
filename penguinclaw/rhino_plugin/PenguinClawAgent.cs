@@ -87,12 +87,15 @@ namespace PenguinClaw
             "  COMPONENT TYPES:\n" +
             "    'slider' — number slider. Fields: value, min, max.\n" +
             "    'panel'  — text panel. Field: text.\n" +
-            "    'python3'— Python 3 script component. Fields: code (string), inputs (string[]), outputs (string[]). USE THIS for all geometry creation in GH.\n" +
-            "    'component' — built-in GH component by component_name (fuzzy matched). Reliable names: 'Addition', 'Multiplication', 'Area', 'Volume', 'Loft', 'Extrude', 'Offset Curve'. Geometry primitives (Sphere, Box, Cylinder) are UNRELIABLE — use python3 instead.\n" +
+            "    'python3'— Python 3 script component. Fields: code (string), inputs (string[]), outputs (string[]). NOTE: may fail if Python 3 plugin not installed — check build result.\n" +
+            "    'component' — built-in GH component by component_name (fuzzy matched). Reliable: 'Addition', 'Multiplication', 'Area', 'Volume', 'Loft', 'Extrude', 'Offset Curve', 'Sphere', 'Box', 'Circle', 'Cylinder', 'Plane', 'Point', 'Move', 'Scale'. Try these before python3.\n" +
             "    'sdk' — component by GUID. Field: guid.\n" +
-            "  EXAMPLE — parametric sphere with python3:\n" +
-            "    components: [{\"id\":\"r\",\"type\":\"slider\",\"name\":\"Radius\",\"value\":5,\"min\":1,\"max\":20}, {\"id\":\"py\",\"type\":\"python3\",\"name\":\"Sphere\",\"inputs\":[\"radius\"],\"outputs\":[\"geo\"],\"code\":\"import rhinoscriptsyntax as rs\\ngeo = rs.AddSphere((0,0,0), radius)\"}]\n" +
-            "    wires: [{\"from\":\"r:0\",\"to\":\"py:0\"}]\n" +
+            "  STRATEGY: (1) Try native component types first ('Sphere', 'Cylinder', 'Box', 'Move', 'Point') — wire sliders to their inputs. (2) If python3 is needed, call search_gh_components('Python') first to get exact name/GUID. (3) If python3 fails, fall back: create sliders only in GH, then use execute_python_code to read list_gh_sliders() values and build geometry in Rhino.\n" +
+            "  IN-GH python3 code must use Rhino.Geometry (not rhinoscriptsyntax) and assign to output vars:\n" +
+            "    code: \"import Rhino.Geometry as rg\\ngeo = rg.Sphere(rg.Point3d(0,0,radius), radius).ToBrep()\"\n" +
+            "  EXAMPLE — sphere with native GH component:\n" +
+            "    components: [{\"id\":\"r\",\"type\":\"slider\",\"name\":\"Radius\",\"value\":5,\"min\":1,\"max\":20}, {\"id\":\"sph\",\"type\":\"component\",\"component_name\":\"Sphere\"}]\n" +
+            "    wires: [{\"from\":\"r\",\"to\":\"sph:1\"}]  (Sphere inputs: 0=Base plane, 1=Radius)\n" +
             "- search_gh_components(keyword) — search GH server by name (e.g. 'python', 'sphere'). Returns exact names + GUIDs. Call this FIRST if unsure of component_name.\n" +
             "- solve_gh_definition() — trigger recompute on active canvas\n" +
             "- bake_gh_definition(layer_name) — bake all geometry to a named Rhino layer\n\n" +
