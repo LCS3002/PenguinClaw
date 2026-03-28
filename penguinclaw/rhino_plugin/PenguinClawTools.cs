@@ -1756,9 +1756,13 @@ case "list_gh_sliders":      return ListGhSliders();
 
                     try
                     {
-                        toParam.GetType()
-                            .GetMethod("AddSource", BindingFlags.Public | BindingFlags.Instance)
-                            ?.Invoke(toParam, new[] { fromParam });
+                        // Use FirstOrDefault to avoid AmbiguousMatchException when GH has
+                        // multiple AddSource overloads (AddSource(IGH_Param) vs AddSource(IGH_Param, int))
+                        var addSource = toParam.GetType()
+                            .GetMethods(BindingFlags.Public | BindingFlags.Instance)
+                            .FirstOrDefault(m => m.Name == "AddSource" && m.GetParameters().Length == 1);
+                        if (addSource == null) { wiresFailed++; continue; }
+                        addSource.Invoke(toParam, new[] { fromParam });
                         wiresOk++;
                     }
                     catch { wiresFailed++; }

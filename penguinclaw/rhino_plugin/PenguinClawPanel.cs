@@ -26,9 +26,13 @@ namespace PenguinClaw
             }
             Content = _webView;
 
-            // WebView2 on Windows drops its rendering context on focus/visibility changes.
-            // The GotFocus hook is Windows-only; on macOS the Eto WebView handles this natively.
-            // PanelShown (below) covers tab-switching on all platforms.
+            // WebView2 on Windows drops its rendering context on focus/visibility changes —
+            // especially when clicking into docked panels like Grasshopper.
+            // Recovery strategy: GotFocus on the main window + MouseEnter on the panel itself.
+            // MouseEnter catches the Grasshopper case (GH is docked, so GotFocus on the main
+            // window often doesn't fire when returning from GH to the PenguinClaw panel).
+            MouseEnter += OnMouseEnter;
+
 #if !__MACOS__
             try
             {
@@ -39,6 +43,8 @@ namespace PenguinClaw
             catch { }
 #endif
         }
+
+        private void OnMouseEnter(object sender, MouseEventArgs e) => OnMainWindowGotFocus(sender, e);
 
         private void OnMainWindowGotFocus(object sender, EventArgs e)
         {
@@ -80,6 +86,7 @@ namespace PenguinClaw
 
         public void PanelClosing(uint documentSerialNumber, bool onCloseDocument)
         {
+            MouseEnter -= OnMouseEnter;
 #if !__MACOS__
             try
             {
