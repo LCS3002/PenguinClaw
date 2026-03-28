@@ -83,7 +83,9 @@ namespace PenguinClaw
             "## Grasshopper\n" +
             "- list_gh_sliders() / set_gh_slider(name, value) / list_gh_components()\n" +
             "- build_gh_definition(components[], wires[], solve, clear_canvas) — build a GH definition from scratch.\n" +
-            "  WIRE FORMAT (critical): wires is an array of objects: [{\"from\":\"id:outputIndex\",\"to\":\"id:inputIndex\"}] — 0-based indices.\n" +
+            "  WIRE FORMAT: wires is an array of objects: [{\"from\":\"id:outputNameOrIndex\",\"to\":\"id:inputNameOrIndex\"}]\n" +
+            "  You can use param NAME or NICKNAME instead of index number — e.g. {\"from\":\"r\",\"to\":\"sph:Radius\"} is safer than {\"from\":\"r\",\"to\":\"sph:1\"}.\n" +
+            "  ALWAYS call get_gh_component_params(component_name) for any component not in the known list below, BEFORE building, so you know the real param names.\n" +
             "  COMPONENT TYPES — use 'component' (native) by default, python3 only as absolute last resort:\n" +
             "    'component' — built-in GH component by component_name. ALWAYS prefer this. Reliable native components:\n" +
             "      Geometry:  'Sphere', 'Box', 'Circle', 'Rectangle', 'Cylinder', 'Cone', 'Line', 'Arc', 'Polyline', 'Curve'\n" +
@@ -118,7 +120,8 @@ namespace PenguinClaw
             "    components:[{\"id\":\"w\",\"type\":\"slider\",\"name\":\"Width\",\"value\":4,\"min\":1,\"max\":20},{\"id\":\"d\",\"type\":\"slider\",\"name\":\"Depth\",\"value\":4,\"min\":1,\"max\":20},{\"id\":\"h\",\"type\":\"slider\",\"name\":\"Height\",\"value\":6,\"min\":1,\"max\":20},{\"id\":\"box\",\"type\":\"component\",\"component_name\":\"Box\"}]\n" +
             "    wires:[{\"from\":\"w\",\"to\":\"box:1\"},{\"from\":\"d\",\"to\":\"box:2\"},{\"from\":\"h\",\"to\":\"box:3\"}]\n" +
             "- search_gh_components(keyword) — search GH server by name. Use before build if unsure of exact component_name.\n" +
-            "- get_gh_component_params(component_name) — returns the REAL input/output parameter names and indices for any component. ALWAYS call this before wiring any component you don't have memorised above, so you wire to the correct index.\n" +
+            "- get_gh_component_params(component_name) — returns the REAL input/output parameter names and indices. ALWAYS call this before wiring any component not in your memorised list.\n" +
+            "- build_gh_definition returns component_status[] after solve: each entry has id, status (ok/warning/error), and messages[]. Check this — if any component shows an error, fix it (wrong wire index, missing input, etc).\n" +
             "- solve_gh_definition() — trigger recompute on active canvas\n" +
             "- bake_gh_definition(layer_name) — bake geometry to a named Rhino layer. Only call this when the user explicitly asks to bake or bring geometry into Rhino.\n\n" +
 

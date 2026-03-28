@@ -1930,15 +1930,18 @@ case "list_gh_sliders":      return ListGhSliders();
 
                     var fp = fromStr.Split(':');
                     var tp = toStr.Split(':');
-                    // Allow "compId" shorthand (no :index) — default to index 0
                     string fromId = fp[0], toId = tp[0];
-                    int fi = fp.Length >= 2 && int.TryParse(fp[1], out var fii) ? fii : 0;
-                    int ti = tp.Length >= 2 && int.TryParse(tp[1], out var tii) ? tii : 0;
+                    // Index can be numeric OR a param name/nickname — resolve by name if not a number
+                    string fromIdxStr = fp.Length >= 2 ? fp[1] : null;
+                    string toIdxStr   = tp.Length >= 2 ? tp[1] : null;
 
                     if (!compMap.TryGetValue(fromId, out var fromComp))
                         { wiresFailed++; wireErrors.Add($"'{fromId}' not in compMap (not created?)"); continue; }
                     if (!compMap.TryGetValue(toId, out var toComp))
                         { wiresFailed++; wireErrors.Add($"'{toId}' not in compMap (not created?)"); continue; }
+
+                    int fi = GhResolveParamIndex(fromComp, fromIdxStr, isInput: false);
+                    int ti = GhResolveParamIndex(toComp,   toIdxStr,   isInput: true);
 
                     var fromParam = GhGetOutputParam(ghAsm, fromComp, fi);
                     var toParam   = GhGetInputParam(toComp, ti);
@@ -1964,7 +1967,11 @@ case "list_gh_sliders":      return ListGhSliders();
 
                 // ── Solve ────────────────────────────────────────────────────────
                 if (solve)
+                {
                     ghDoc.GetType().GetMethod("NewSolution", new[] { typeof(bool) })?.Invoke(ghDoc, new object[] { false });
+                    // Small wait so GH has time to compute before we read runtime messages
+                    System.Threading.Thread.Sleep(300);
+                }
 
                 // ── Zoom canvas to fit all new components ─────────────────────────
                 try
@@ -1984,12 +1991,39 @@ case "list_gh_sliders":      return ListGhSliders();
                 }
                 catch { }
 
+                // ── Post-solve component status ───────────────────────────────────
+                var compStatus = new JArray();
+                var ghAsm2 = ghAsm; // alias for closure clarity
+                foreach (var kv in compMap)
+                {
+                    var cobj  = kv.Value;
+                    var cmsgs = GhGetRuntimeMessages(ghAsm2, cobj);
+                    var hasErr  = false; var hasWarn = false;
+                    foreach (var m in cmsgs.OfType<JObject>())
+                    {
+                        if (m["level"]?.ToString() == "error")   hasErr  = true;
+                        if (m["level"]?.ToString() == "warning") hasWarn = true;
+                    }
+                    var entry = new JObject
+                    {
+                        ["id"]     = kv.Key,
+                        ["status"] = hasErr ? "error" : hasWarn ? "warning" : "ok",
+                    };
+                    if (cmsgs.Count > 0) entry["messages"] = cmsgs;
+                    compStatus.Add(entry);
+                }
+
                 var msg = $"Built GH definition: {compMap.Count}/{components.Count} components";
                 if (wires != null && wires.Count > 0)
                     msg += $", {wiresOk}/{wires.Count} wires connected";
-                if (wiresFailed > 0) msg += $" ({wiresFailed} wires failed)";
+                if (wiresFailed > 0) msg += $" ({wiresFailed} wires FAILED — see wire_errors)";
 
-                var result = new JObject { ["message"] = msg, ["components"] = created };
+                var errCount  = compStatus.OfType<JObject>().Count(e => e["status"]?.ToString() == "error");
+                var warnCount = compStatus.OfType<JObject>().Count(e => e["status"]?.ToString() == "warning");
+                if (errCount > 0)  msg += $" | {errCount} component(s) have errors";
+                if (warnCount > 0) msg += $" | {warnCount} component(s) have warnings";
+
+                var result = new JObject { ["message"] = msg, ["components"] = created, ["component_status"] = compStatus };
                 if (wireErrors.Count > 0) result["wire_errors"] = wireErrors;
                 return result;
             });
@@ -2285,6 +2319,65 @@ case "list_gh_sliders":      return ListGhSliders();
                 return null;
             }
             catch { return null; }
+        }
+
+        /// <summary>
+        /// Resolves a wire endpoint index string to an integer.
+        /// Accepts numeric strings ("0","1"…) or param name/nickname ("Radius","R"…).
+        /// Falls back to 0 if not found.
+        /// </summary>
+        private static int GhResolveParamIndex(object comp, string indexStr, bool isInput)
+        {
+            if (indexStr == null) return 0;
+            // Numeric shorthand
+            if (int.TryParse(indexStr, out var n)) return n;
+            // Name/nickname lookup on the live component instance
+            try
+            {
+                var paramsObj = comp.GetType().GetProperty("Params", BindingFlags.Public | BindingFlags.Instance)?.GetValue(comp);
+                var list = paramsObj?.GetType()
+                    .GetProperty(isInput ? "Input" : "Output", BindingFlags.Public | BindingFlags.Instance)
+                    ?.GetValue(paramsObj) as IList;
+                if (list == null) return 0;
+                for (int i = 0; i < list.Count; i++)
+                {
+                    var p  = list[i]; if (p == null) continue;
+                    var pt = p.GetType();
+                    var pName = pt.GetProperty("Name",     BindingFlags.Public | BindingFlags.Instance)?.GetValue(p)?.ToString() ?? "";
+                    var pNick = pt.GetProperty("NickName", BindingFlags.Public | BindingFlags.Instance)?.GetValue(p)?.ToString() ?? "";
+                    if (string.Equals(pName, indexStr, StringComparison.OrdinalIgnoreCase) ||
+                        string.Equals(pNick, indexStr, StringComparison.OrdinalIgnoreCase))
+                        return i;
+                }
+            }
+            catch { }
+            return 0;
+        }
+
+        /// <summary>
+        /// Returns runtime messages (remarks/warnings/errors) for a GH component after a solve.
+        /// </summary>
+        private static JArray GhGetRuntimeMessages(Assembly ghAsm, object comp)
+        {
+            var result = new JArray();
+            try
+            {
+                var ghEnum = ghAsm.GetType("Grasshopper.Kernel.GH_RuntimeMessageLevel");
+                if (ghEnum == null) return result;
+                var getMessages = comp.GetType().GetMethod("RuntimeMessages",
+                    BindingFlags.Public | BindingFlags.Instance);
+                if (getMessages == null) return result;
+                foreach (var (intVal, label) in new[] { (10, "remark"), (20, "warning"), (30, "error") })
+                {
+                    var enumVal = Enum.ToObject(ghEnum, intVal);
+                    var msgs = getMessages.Invoke(comp, new[] { enumVal }) as IEnumerable;
+                    if (msgs == null) continue;
+                    foreach (var m in msgs)
+                        result.Add(new JObject { ["level"] = label, ["text"] = m?.ToString() ?? "" });
+                }
+            }
+            catch { }
+            return result;
         }
 
         private static void GhSetPivot(object comp, int x, int y)
