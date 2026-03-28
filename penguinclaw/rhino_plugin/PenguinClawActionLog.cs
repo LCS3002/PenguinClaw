@@ -359,8 +359,10 @@ namespace PenguinClaw
             tool == "list_layers"          ||
             tool == "list_gh_sliders"      ||
             tool == "list_gh_components"   ||
-            tool == "capture_viewport"     ||
-            tool == "select_objects_by_id";
+            tool == "capture_viewport"        ||
+            tool == "select_objects_by_id"    ||
+            tool == "search_gh_components"    ||
+            tool == "get_gh_component_params";
 
         private static bool IsCreateCmd(string cmd)
         {

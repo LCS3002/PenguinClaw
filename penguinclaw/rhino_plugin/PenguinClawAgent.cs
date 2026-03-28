@@ -118,6 +118,7 @@ namespace PenguinClaw
             "    components:[{\"id\":\"w\",\"type\":\"slider\",\"name\":\"Width\",\"value\":4,\"min\":1,\"max\":20},{\"id\":\"d\",\"type\":\"slider\",\"name\":\"Depth\",\"value\":4,\"min\":1,\"max\":20},{\"id\":\"h\",\"type\":\"slider\",\"name\":\"Height\",\"value\":6,\"min\":1,\"max\":20},{\"id\":\"box\",\"type\":\"component\",\"component_name\":\"Box\"}]\n" +
             "    wires:[{\"from\":\"w\",\"to\":\"box:1\"},{\"from\":\"d\",\"to\":\"box:2\"},{\"from\":\"h\",\"to\":\"box:3\"}]\n" +
             "- search_gh_components(keyword) — search GH server by name. Use before build if unsure of exact component_name.\n" +
+            "- get_gh_component_params(component_name) — returns the REAL input/output parameter names and indices for any component. ALWAYS call this before wiring any component you don't have memorised above, so you wire to the correct index.\n" +
             "- solve_gh_definition() — trigger recompute on active canvas\n" +
             "- bake_gh_definition(layer_name) — bake geometry to a named Rhino layer. Only call this when the user explicitly asks to bake or bring geometry into Rhino.\n\n" +
 

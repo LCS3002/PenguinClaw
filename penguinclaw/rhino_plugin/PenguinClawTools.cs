@@ -145,6 +145,20 @@ namespace PenguinClaw
                 },
                 new JObject
                 {
+                    ["name"]        = "get_gh_component_params",
+                    ["description"] = "Returns the exact input and output parameter names and indices for a Grasshopper component. Call this before build_gh_definition to know the correct wire indices instead of guessing. E.g. get_gh_component_params('Cylinder') returns inputs: 0=Base, 1=Radius, 2=Height.",
+                    ["input_schema"] = new JObject
+                    {
+                        ["type"] = "object",
+                        ["properties"] = new JObject
+                        {
+                            ["component_name"] = new JObject { ["type"] = "string", ["description"] = "Component name to inspect (fuzzy matched, same as build_gh_definition component_name)." },
+                        },
+                        ["required"] = new JArray { "component_name" },
+                    },
+                },
+                new JObject
+                {
                     ["name"]        = "set_gh_slider",
                     ["description"] = "Sets the value of a Grasshopper number slider by NickName and triggers a new solution.",
                     ["input_schema"] = new JObject
@@ -661,7 +675,8 @@ namespace PenguinClaw
                 case "list_layers":          return ListLayers();
 case "list_gh_sliders":      return ListGhSliders();
                 case "list_gh_components":   return ListGhComponents();
-                case "search_gh_components": return SearchGhComponents(S(input, "keyword"));
+                case "search_gh_components":      return SearchGhComponents(S(input, "keyword"));
+                case "get_gh_component_params":   return GetGhComponentParams(S(input, "component_name"));
                 case "set_gh_slider":        return SetGhSlider(S(input, "name"), D(input, "value"));
                 case "capture_viewport":     return CaptureViewport();
                 case "run_rhino_command":    return RunRhinoCommand(S(input, "command"), input["echo"]?.ToObject<bool>() ?? true);
@@ -1054,6 +1069,60 @@ case "list_gh_sliders":      return ListGhSliders();
                     results.Add(new JObject { ["name"] = name, ["guid"] = guid, ["category"] = cat });
                 }
                 return Obj("keyword", keyword, "count", results.Count, "matches", results);
+            });
+        }
+
+        private static string GetGhComponentParams(string componentName)
+        {
+            if (string.IsNullOrWhiteSpace(componentName)) return Fail("component_name is required.");
+            return OnMain(() =>
+            {
+                var ghAsm = Assembly.Load("Grasshopper");
+                // Create a temporary instance — don't add to canvas
+                var comp = GhMakeComponent(ghAsm, componentName);
+                if (comp == null)
+                    return new JObject { ["success"] = false, ["message"] = $"Component '{componentName}' not found. Try search_gh_components('{componentName}') first." };
+
+                // Ensure attributes are created so the component is fully initialised
+                try { comp.GetType().GetMethod("CreateAttributes", BindingFlags.Public | BindingFlags.Instance, null, Type.EmptyTypes, null)?.Invoke(comp, null); } catch { }
+
+                // Read actual Name from the instance
+                var actualName = comp.GetType().GetProperty("Name", BindingFlags.Public | BindingFlags.Instance)?.GetValue(comp)?.ToString() ?? componentName;
+
+                JArray ReadParams(string direction)
+                {
+                    var arr = new JArray();
+                    try
+                    {
+                        var paramsObj = comp.GetType().GetProperty("Params", BindingFlags.Public | BindingFlags.Instance)?.GetValue(comp);
+                        if (paramsObj == null) return arr;
+                        var list = paramsObj.GetType().GetProperty(direction, BindingFlags.Public | BindingFlags.Instance)?.GetValue(paramsObj) as IList;
+                        if (list == null) return arr;
+                        for (int i = 0; i < list.Count; i++)
+                        {
+                            var p = list[i];
+                            if (p == null) continue;
+                            var pt       = p.GetType();
+                            var pName    = pt.GetProperty("Name",        BindingFlags.Public | BindingFlags.Instance)?.GetValue(p)?.ToString() ?? "";
+                            var pNick    = pt.GetProperty("NickName",    BindingFlags.Public | BindingFlags.Instance)?.GetValue(p)?.ToString() ?? "";
+                            var pDesc    = pt.GetProperty("Description", BindingFlags.Public | BindingFlags.Instance)?.GetValue(p)?.ToString() ?? "";
+                            arr.Add(new JObject { ["index"] = i, ["name"] = pName, ["nickname"] = pNick, ["description"] = pDesc });
+                        }
+                    }
+                    catch { }
+                    return arr;
+                }
+
+                var inputs  = ReadParams("Input");
+                var outputs = ReadParams("Output");
+                return new JObject
+                {
+                    ["success"]        = true,
+                    ["component_name"] = actualName,
+                    ["inputs"]         = inputs,
+                    ["outputs"]        = outputs,
+                    ["tip"]            = $"Use these indices in build_gh_definition wires: {{\"from\":\"slider_id\",\"to\":\"comp_id:N\"}} where N is the index above.",
+                };
             });
         }
 
