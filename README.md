@@ -15,7 +15,7 @@
 
 ---
 
-PenguinClaw embeds an AI agent directly into Rhino 8 as a dockable panel. Unlike plugins that enumerate a fixed set of geometry operations, PenguinClaw routes all Rhino commands through a single `run_rhino_command` passthrough — giving the agent access to every Rhino command (980+, including third-party plugins) without enumerating them as individual tools. The ReAct loop runs in-process inside Rhino, with direct RhinoCommon API access and no subprocess boundary. Grasshopper components are auto-indexed at startup and keyword-matched per request, so the agent always has the five most relevant GH tools available without blowing up the context window.
+PenguinClaw embeds an AI agent directly into Rhino 8 as a dockable panel. All Rhino commands are routed through a single `run_rhino_command` passthrough, giving the agent access to every Rhino command (980+, including third-party plugins) without enumerating them as individual tools. The ReAct loop runs in-process inside Rhino with direct RhinoCommon API access. Grasshopper components are auto-indexed at startup and keyword-matched per request, so the agent always has the five most relevant GH tools available without bloating the context window.
 
 ```
 "Build a 10×10×10 box, fillet the top edges at radius 2,
@@ -112,7 +112,7 @@ See [AGENTS.md](AGENTS.md) for a full technical reference.
 2. Open a terminal and run: `ollama pull qwen2.5:7b` (~4.7 GB download)
 3. In PenguinClaw → **Settings** tab → select **Ollama** → **Save & Connect**
 
-For complex multi-step tasks (Grasshopper definition building, boolean chains), Anthropic's Claude gives the most reliable results. See [AGENTS.md](AGENTS.md#tool-calling-reliability-anthropic-vs-groq-vs-ollama) for a detailed comparison.
+For complex multi-step tasks (Grasshopper definition building, boolean chains), Anthropic gives the most reliable results. See [AGENTS.md](AGENTS.md#tool-calling-reliability-anthropic-vs-groq-vs-ollama) for a detailed comparison.
 
 ---
 

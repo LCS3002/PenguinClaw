@@ -4,16 +4,9 @@ Technical reference for contributors. Describes the design decisions, contracts,
 
 ---
 
-## Architectural Philosophy: Why `run_rhino_command` Beats 72 Enumerated Tools
+## Architectural Philosophy: Tool Design
 
-Rhino 8 ships with 980+ built-in commands. A naive approach would define a separate tool for each (`create_box`, `create_sphere`, `extrude_curve`, …). This fails for four reasons:
-
-1. **Context window cost.** Each tool definition takes ~30–80 tokens. 72 tools = ~4,000 tokens per request — before the user's message, history, or tool results.
-2. **Prompt cache fragility.** Anthropic's ephemeral cache breaks if the tool list changes between requests. Dynamic, per-request tool sets ruin caching.
-3. **Maintenance burden.** Every new Rhino command or third-party plugin command requires a new tool definition, parameter schema, and implementation.
-4. **LLM knowledge overlap.** Claude already knows Rhino command syntax from training data. `_Box 0,0,0 10,10,0 10` is not novel information.
-
-PenguinClaw instead exposes a single `run_rhino_command` tool that forwards any command string directly to `RhinoApp.RunScript()`. This gives the agent access to all 980+ Rhino commands (including third-party plugin commands) through one stable tool definition. The tool list stays small, the cache stays hot, and adding a new Rhino command requires zero code changes.
+Rhino 8 ships with 980+ built-in commands. PenguinClaw exposes a single `run_rhino_command` tool that forwards any command string directly to `RhinoApp.RunScript()`. This gives the agent access to all 980+ commands (including third-party plugin commands) through one stable tool definition. The tool list stays small, the prompt cache stays hot, and adding support for a new Rhino command requires zero code changes.
 
 Dedicated typed tools (`move_object`, `scale_object`, `boolean_union`, etc.) exist only where the RhinoCommon API offers something the command line cannot: atomicity, structured return values, or undo safety for operations that need precise object ID tracking.
 
@@ -76,7 +69,7 @@ The GH registry (`RhinoCommandRegistry`) builds at plugin startup on a backgroun
 
 ```csharp
 CachedTool {
-    Definition:  JObject (Claude tool definition)
+    Definition:  JObject (tool definition)
     Keywords:    string[] (pre-tokenized name + category + subcategory + description)
 }
 ```
@@ -284,7 +277,7 @@ In `penguinclaw/ui/App.jsx`, add the provider name to the Settings tab's provide
 
 ## Tool-Calling Reliability: Anthropic vs Groq vs Ollama
 
-| | Anthropic (Claude) | Groq (Llama 3.3 70B) | Ollama (Qwen 2.5 7B) |
+| | Anthropic | Groq (Llama 3.3 70B) | Ollama (Qwen 2.5 7B) |
 |---|---|---|---|
 | **Parallel tool calls** | Reliable | Occasional misses | Rare |
 | **Nested JSON in args** | Correct | Usually correct | Sometimes flattened |
@@ -294,7 +287,7 @@ In `penguinclaw/ui/App.jsx`, add the provider name to the Settings tab's provide
 | **Cost** | ~$0.25/MTok (cached) | Free tier | Free |
 
 **Practical implications:**
-- For multi-step Grasshopper definition building (many tool calls in sequence), Anthropic is significantly more reliable.
-- Groq is a good free alternative for single-step geometry creation.
-- Ollama's 7B model works for simple commands but struggles with complex ReAct chains. A 32B+ model (e.g. `qwen2.5:32b`) closes the gap substantially.
-- The `build_gh_definition` tool requires precise nested JSON for `components[]` and `wires[]` — Anthropic handles this consistently; smaller models often malform the arrays.
+- For multi-step Grasshopper definition building (many tool calls in sequence), Anthropic is the most reliable choice.
+- Groq is a good free option for single-step geometry creation.
+- Ollama works well for simple commands; larger models (32B+, e.g. `qwen2.5:32b`) handle complex ReAct chains more reliably than 7B models.
+- The `build_gh_definition` tool requires precise nested JSON for `components[]` and `wires[]` — larger models handle this more consistently.

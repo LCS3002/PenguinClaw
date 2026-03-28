@@ -5,7 +5,7 @@
     <AssemblyName>PenguinClaw</AssemblyName>
     <OutputType>Library</OutputType>
     <PackageId>PenguinClaw</PackageId>
-    <Version>0.1.0</Version>
+    <Version>0.3.0</Version>
     <Description>PenguinClaw — AI agent panel for Rhino 8</Description>
     <AllowUnsafeBlocks>true</AllowUnsafeBlocks>
   </PropertyGroup>
