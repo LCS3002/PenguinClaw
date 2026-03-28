@@ -2087,6 +2087,47 @@ case "list_gh_sliders":      return ListGhSliders();
                 if (codeProp != null)
                     codeProp.SetValue(comp, "#! python3\n" + code);
 
+                // Add custom input parameters (so wires can connect at the right indices)
+                // The python3 component starts with default x,y — we rename/add to match requested inputs
+                if (inputs != null && inputs.Count > 0)
+                {
+                    try
+                    {
+                        var paramsObj = ct.GetProperty("Params", BindingFlags.Public | BindingFlags.Instance)?.GetValue(comp);
+                        var inputList = paramsObj?.GetType().GetProperty("Input", BindingFlags.Public | BindingFlags.Instance)?.GetValue(paramsObj) as IList;
+                        if (inputList != null)
+                        {
+                            // Rename existing default params first, then add extras
+                            for (int i = 0; i < inputs.Count; i++)
+                            {
+                                var inputName = inputs[i]?.ToString() ?? $"x{i}";
+                                if (i < inputList.Count)
+                                {
+                                    // Rename the existing param
+                                    var existing = inputList[i];
+                                    existing?.GetType().GetProperty("NickName", BindingFlags.Public | BindingFlags.Instance)?.SetValue(existing, inputName);
+                                    existing?.GetType().GetProperty("Name",     BindingFlags.Public | BindingFlags.Instance)?.SetValue(existing, inputName);
+                                }
+                                else
+                                {
+                                    // Try to add a new param via RegisterInputParam or DestroyVariableParameter+CreateVariableParameter
+                                    var registerMethod = ct.GetMethod("RegisterInputParam", BindingFlags.Public | BindingFlags.Instance | BindingFlags.NonPublic);
+                                    if (registerMethod == null) break;
+                                    // Create a GH_Param<GH_Number> as the new input
+                                    var numberParamType = ghAsm.GetType("Grasshopper.Kernel.Parameters.Param_Number");
+                                    if (numberParamType == null) break;
+                                    var newParam = Activator.CreateInstance(numberParamType);
+                                    if (newParam == null) break;
+                                    newParam.GetType().GetProperty("NickName", BindingFlags.Public | BindingFlags.Instance)?.SetValue(newParam, inputName);
+                                    newParam.GetType().GetProperty("Name",     BindingFlags.Public | BindingFlags.Instance)?.SetValue(newParam, inputName);
+                                    registerMethod.Invoke(comp, new[] { newParam });
+                                }
+                            }
+                        }
+                    }
+                    catch { /* best-effort — proceed even if param setup fails */ }
+                }
+
                 return comp;
             }
             catch { return null; }
