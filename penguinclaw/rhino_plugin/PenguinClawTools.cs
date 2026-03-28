@@ -525,10 +525,11 @@ namespace PenguinClaw
                     ["description"] =
                         "Programmatically builds a Grasshopper definition by creating components and wiring them together. " +
                         "Supported types: 'slider' (number slider), 'panel' (text/value panel), 'toggle' (boolean toggle), " +
-                        "'component' (any GH component by name, e.g. 'Box', 'Loft', 'Circle', 'Amplitude'), " +
-                        "'python3' (Python 3 script component), 'sdk' (component by GUID). " +
-                        "Wires connect component outputs to inputs using 'id:paramIndex' notation (0-based). " +
-                        "For sliders/toggles, output index is always 0 — the component itself is the output. " +
+                        "'component' (GH component by name — fuzzy matched, e.g. 'Sphere' matches 'Sphere SRF', " +
+                        "'Box' matches 'Box 2Pt', 'Pt' or 'Construct Point' for points, 'Loft', 'Circle', 'Extrude'), " +
+                        "'python3' (Python 3 script component with code/inputs/outputs), 'sdk' (component by GUID). " +
+                        "Wires: 'id:paramIndex' (0-based). Sliders/toggles output index is always 0. " +
+                        "PREFER python3 type for geometry creation — more reliable than component type. " +
                         "Set solve:true to compute the solution after building.",
                     ["input_schema"] = new JObject
                     {
@@ -1964,12 +1965,20 @@ case "list_gh_sliders":      return ListGhSliders();
                     ?.GetValue(server) as IEnumerable;
                 if (proxies == null) return null;
 
-                object proxy = null;
+                // Three-pass fuzzy match: exact → starts-with → contains (shortest match wins)
+                object exactProxy = null, startsProxy = null, containsProxy = null;
+                int startsLen = int.MaxValue, containsLen = int.MaxValue;
                 foreach (var p in proxies)
                 {
                     var n = p?.GetType().GetProperty("Name", BindingFlags.Public | BindingFlags.Instance)?.GetValue(p)?.ToString();
-                    if (string.Equals(n, componentName, StringComparison.OrdinalIgnoreCase)) { proxy = p; break; }
+                    if (n == null) continue;
+                    if (string.Equals(n, componentName, StringComparison.OrdinalIgnoreCase)) { exactProxy = p; break; }
+                    if (startsProxy == null && n.StartsWith(componentName, StringComparison.OrdinalIgnoreCase) && n.Length < startsLen)
+                        { startsProxy = p; startsLen = n.Length; }
+                    if (n.IndexOf(componentName, StringComparison.OrdinalIgnoreCase) >= 0 && n.Length < containsLen)
+                        { containsProxy = p; containsLen = n.Length; }
                 }
+                var proxy = exactProxy ?? startsProxy ?? containsProxy;
                 if (proxy == null) return null;
 
                 return proxy.GetType()
@@ -1983,15 +1992,25 @@ case "list_gh_sliders":      return ListGhSliders();
         {
             try
             {
-                var t = ghAsm.GetType("Grasshopper.Kernel.Components.GH_ScriptComponent")
-                     ?? ghAsm.GetType("Grasshopper.Kernel.Special.GH_PythonScript");
-                if (t == null) return null;
+                // Try to create via component server by known Rhino-8 Python 3 component names
+                object comp = GhMakeComponent(ghAsm, "Python 3 Script")
+                           ?? GhMakeComponent(ghAsm, "Python3 Script")
+                           ?? GhMakeComponent(ghAsm, "Python Script");
 
-                var comp = Activator.CreateInstance(t);
+                // Fallback: try direct type instantiation (GH1 style)
+                if (comp == null)
+                {
+                    var t = ghAsm.GetType("Grasshopper.Kernel.Components.GH_ScriptComponent")
+                         ?? ghAsm.GetType("Grasshopper.Kernel.Special.GH_PythonScript");
+                    if (t != null) comp = Activator.CreateInstance(t);
+                }
+
                 if (comp == null) return null;
 
-                var codeProp = t.GetProperty("ScriptSource", BindingFlags.Public | BindingFlags.Instance)
-                            ?? t.GetProperty("Script", BindingFlags.Public | BindingFlags.Instance);
+                // Set code via ScriptSource or Script property
+                var ct = comp.GetType();
+                var codeProp = ct.GetProperty("ScriptSource", BindingFlags.Public | BindingFlags.Instance)
+                            ?? ct.GetProperty("Script",       BindingFlags.Public | BindingFlags.Instance);
                 if (codeProp != null)
                     codeProp.SetValue(comp, "#! python3\n" + code);
 
