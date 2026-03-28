@@ -459,7 +459,10 @@ namespace PenguinClaw
             {
                 var content = new byte[stream.Length];
                 stream.Read(content, 0, content.Length);
-                resp.ContentType     = MimeType(path);
+                resp.ContentType = MimeType(path);
+                // Prevent WebView2 from caching HTML; hashed JS/CSS assets can cache freely
+                if (path.EndsWith(".html") || path == "/")
+                    resp.Headers.Add("Cache-Control", "no-store, no-cache, must-revalidate");
                 resp.ContentLength64 = content.Length;
                 resp.OutputStream.Write(content, 0, content.Length);
                 resp.Close();
