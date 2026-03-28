@@ -82,9 +82,17 @@ namespace PenguinClaw
 
             "## Grasshopper\n" +
             "- list_gh_sliders() / set_gh_slider(name, value) / list_gh_components()\n" +
-            "- build_gh_definition(components[], wires[], solve, clear_canvas) — build a GH definition from scratch:\n" +
-            "  components: [{id, type, name, x, y, ...}] type = 'slider'|'panel'|'toggle'|'component'|'python3'|'sdk'\n" +
-            "  wires: ['fromId:outIdx->toId:inIdx'] to connect outputs to inputs\n" +
+            "- build_gh_definition(components[], wires[], solve, clear_canvas) — build a GH definition from scratch.\n" +
+            "  WIRE FORMAT (critical): wires is an array of objects: [{\"from\":\"id:outputIndex\",\"to\":\"id:inputIndex\"}] — 0-based indices.\n" +
+            "  COMPONENT TYPES:\n" +
+            "    'slider' — number slider. Fields: value, min, max.\n" +
+            "    'panel'  — text panel. Field: text.\n" +
+            "    'python3'— Python 3 script component. Fields: code (string), inputs (string[]), outputs (string[]). USE THIS for all geometry creation in GH.\n" +
+            "    'component' — built-in GH component by component_name (fuzzy matched). Reliable names: 'Addition', 'Multiplication', 'Area', 'Volume', 'Loft', 'Extrude', 'Offset Curve'. Geometry primitives (Sphere, Box, Cylinder) are UNRELIABLE — use python3 instead.\n" +
+            "    'sdk' — component by GUID. Field: guid.\n" +
+            "  EXAMPLE — parametric sphere with python3:\n" +
+            "    components: [{\"id\":\"r\",\"type\":\"slider\",\"name\":\"Radius\",\"value\":5,\"min\":1,\"max\":20}, {\"id\":\"py\",\"type\":\"python3\",\"name\":\"Sphere\",\"inputs\":[\"radius\"],\"outputs\":[\"geo\"],\"code\":\"import rhinoscriptsyntax as rs\\ngeo = rs.AddSphere((0,0,0), radius)\"}]\n" +
+            "    wires: [{\"from\":\"r:0\",\"to\":\"py:0\"}]\n" +
             "- solve_gh_definition() — trigger recompute on active canvas\n" +
             "- bake_gh_definition(layer_name) — bake all geometry to a named Rhino layer\n\n" +
 
