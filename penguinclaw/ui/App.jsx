@@ -28,25 +28,33 @@ const PROVIDERS = {
     label:       "Anthropic (best quality)",
     keyPrefix:   "sk-ant-",
     keyPlaceholder: "sk-ant-...",
-    description: "Best tool-calling quality. ~$1–2/month for daily use.",
+    description: "Best tool-calling quality. Vision (capture_and_assess) supported. ~$1–3/month for daily use.",
     link:        "https://console.anthropic.com/",
     linkLabel:   "Get API key at console.anthropic.com ↗",
+    // Claude Haiku 4.5 pricing per token
+    inputRate:   0.0000008,   // $0.80 / 1M input tokens
+    outputRate:  0.000004,    // $4.00 / 1M output tokens
   },
   groq: {
     label:       "Groq (free tier)",
     keyPrefix:   "gsk_",
     keyPlaceholder: "gsk_...",
-    description: "Free up to 14,400 requests/day. Requires a free Groq account.",
+    description: "Free up to 14,400 requests/day. Note: vision (capture_and_assess) is not supported on Groq.",
     link:        "https://console.groq.com/",
     linkLabel:   "Get free API key at console.groq.com ↗",
+    // Groq llama-3.3-70b pricing (approximate)
+    inputRate:   0.00000059,  // $0.59 / 1M input tokens
+    outputRate:  0.00000079,  // $0.79 / 1M output tokens
   },
   ollama: {
     label:       "Ollama (local, free)",
     keyPrefix:   null,
     keyPlaceholder: null,
-    description: "Fully local — no API key, no cost. Requires Ollama installed and a model downloaded (e.g. qwen2.5:7b).",
+    description: "Fully local — no API key, no cost. Note: vision (capture_and_assess) is not supported on Ollama. Requires Ollama installed and a model downloaded (e.g. qwen2.5:7b).",
     link:        "https://ollama.com/",
     linkLabel:   "Install Ollama at ollama.com ↗",
+    inputRate:   0,
+    outputRate:  0,
   },
 };
 
@@ -601,7 +609,11 @@ export default function PenguinClaw() {
               {turnStats.turn > 0 && (
                 <div style={{ fontSize: "9px", color: C.gray300, textAlign: "center", paddingTop: "3px" }}>
                   Turn {turnStats.turn}
-                  {turnStats.outputTokens > 0 && ` · ~$${((turnStats.inputTokens * 0.00000025 + turnStats.outputTokens * 0.00000125)).toFixed(4)}`}
+                  {turnStats.outputTokens > 0 && (() => {
+                    const rates = PROVIDERS[health.provider] || PROVIDERS.anthropic;
+                    const cost = turnStats.inputTokens * rates.inputRate + turnStats.outputTokens * rates.outputRate;
+                    return cost > 0 ? ` · ~$${cost.toFixed(4)}` : null;
+                  })()}
                 </div>
               )}
               <div style={{ padding: "8px 10px", display: "flex", gap: "6px", alignItems: "flex-end" }}>

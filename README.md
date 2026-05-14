@@ -4,7 +4,7 @@
 
 **The AI plugin for Rhinoceros that actually builds things.**
 
-[![CI](https://github.com/LCS3002/PenguinClaw/actions/workflows/ci.yml/badge.svg)](https://github.com/LCS3002/PenguinClaw/actions/workflows/ci.yml)
+[![CI](https://github.com/LCS3002/PenguinClaw-Rhinoceros/actions/workflows/ci.yml/badge.svg)](https://github.com/LCS3002/PenguinClaw-Rhinoceros/actions/workflows/ci.yml)
 [![License: MIT](https://img.shields.io/badge/License-MIT-blue.svg)](LICENSE)
 [![Platform](https://img.shields.io/badge/platform-Rhino%208%20%E2%80%A2%20Windows%20%2B%20Mac-blue)](https://www.rhino3d.com/)
 [![Providers](https://img.shields.io/badge/AI-Anthropic%20%7C%20Groq%20%7C%20Ollama-blueviolet)](#choosing-a-provider)
@@ -128,8 +128,8 @@ For complex multi-step tasks (Grasshopper definition building, boolean chains), 
 
 ```bash
 # 1. Clone
-git clone https://github.com/LCS3002/PenguinClaw.git
-cd PenguinClaw
+git clone https://github.com/LCS3002/PenguinClaw-Rhinoceros.git
+cd PenguinClaw-Rhinoceros
 
 # 2. Build the React UI
 cd penguinclaw/ui

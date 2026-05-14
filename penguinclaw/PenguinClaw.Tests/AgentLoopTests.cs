@@ -32,7 +32,7 @@ namespace PenguinClaw.Tests
     {
         // ── History trim logic (extracted) ──────────────────────────────────────
 
-        private const int MaxHistory = 30;
+        private const int MaxHistory = 20; // must match PenguinClawAgent.MaxHistory
 
         private static JArray TrimHistory(JArray messages)
         {

@@ -418,9 +418,19 @@ namespace PenguinClaw
 
         private static string FindScanOutputJson()
         {
-            // Walk up from assembly location to find agent/tools/auto_generated/scan_output.json
-            var dir = new DirectoryInfo(Path.GetDirectoryName(
-                System.Reflection.Assembly.GetExecutingAssembly().Location));
+            var assemblyDir = Path.GetDirectoryName(
+                System.Reflection.Assembly.GetExecutingAssembly().Location);
+
+            // Check next to the assembly first — this is where PenguinClawScan writes when no
+            // dev-layout agent/tools/ directory exists (i.e. normal installed plugin).
+            if (!string.IsNullOrEmpty(assemblyDir))
+            {
+                var sideBySide = Path.Combine(assemblyDir, "scan_output.json");
+                if (File.Exists(sideBySide)) return sideBySide;
+            }
+
+            // Walk up looking for the dev-layout path: agent/tools/auto_generated/scan_output.json
+            var dir = assemblyDir != null ? new DirectoryInfo(assemblyDir) : null;
             for (int i = 0; i < 8 && dir != null; i++)
             {
                 var candidate = Path.Combine(dir.FullName, "agent", "tools", "auto_generated", "scan_output.json");

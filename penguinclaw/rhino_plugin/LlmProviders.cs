@@ -33,6 +33,9 @@ namespace PenguinClaw
         public string             Text         { get; set; }
         public List<LlmToolCall>  ToolCalls    { get; set; } = new List<LlmToolCall>();
         public string             ErrorMessage { get; set; }
+        public int InputTokens   { get; set; }
+        public int OutputTokens  { get; set; }
+        public int CachedTokens  { get; set; }
     }
 
     // ── Provider interface ────────────────────────────────────────────────────
@@ -118,11 +121,15 @@ namespace PenguinClaw
                             });
                     }
 
+                    var usage = parsed["usage"] as JObject;
                     return new LlmResponse
                     {
-                        StopReason = stopReason == "tool_use" ? "tool_use" : "end_turn",
-                        Text       = sb.ToString().Trim(),
-                        ToolCalls  = calls,
+                        StopReason    = stopReason == "tool_use" ? "tool_use" : "end_turn",
+                        Text          = sb.ToString().Trim(),
+                        ToolCalls     = calls,
+                        InputTokens   = usage?["input_tokens"]?.ToObject<int>()                ?? 0,
+                        OutputTokens  = usage?["output_tokens"]?.ToObject<int>()               ?? 0,
+                        CachedTokens  = usage?["cache_read_input_tokens"]?.ToObject<int>()     ?? 0,
                     };
                 },
                 "Anthropic");
@@ -217,11 +224,15 @@ namespace PenguinClaw
                         }
                     }
 
+                    var usage = parsed["usage"] as JObject;
                     return new LlmResponse
                     {
-                        StopReason = calls.Count > 0 ? "tool_use" : "end_turn",
-                        Text       = text,
-                        ToolCalls  = calls,
+                        StopReason   = calls.Count > 0 ? "tool_use" : "end_turn",
+                        Text         = text,
+                        ToolCalls    = calls,
+                        InputTokens  = usage?["prompt_tokens"]?.ToObject<int>()     ?? 0,
+                        OutputTokens = usage?["completion_tokens"]?.ToObject<int>() ?? 0,
+                        CachedTokens = 0,
                     };
                 },
                 "OpenAI-compat");

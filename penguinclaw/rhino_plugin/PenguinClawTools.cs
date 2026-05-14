@@ -553,11 +553,10 @@ namespace PenguinClaw
                     ["description"] =
                         "Programmatically builds a Grasshopper definition by creating components and wiring them together. " +
                         "Supported types: 'slider' (number slider), 'panel' (text/value panel), 'toggle' (boolean toggle), " +
-                        "'component' (GH component by name — fuzzy matched, e.g. 'Sphere' matches 'Sphere SRF', " +
-                        "'Box' matches 'Box 2Pt', 'Pt' or 'Construct Point' for points, 'Loft', 'Circle', 'Extrude'), " +
-                        "'python3' (Python 3 script component with code/inputs/outputs), 'sdk' (component by GUID). " +
-                        "Wires: 'id:paramIndex' (0-based). Sliders/toggles output index is always 0. " +
-                        "PREFER python3 type for geometry creation — more reliable than component type. " +
+                        "'component' (native GH component by name — ALWAYS prefer this; fuzzy matched, e.g. 'Sphere', 'Box', 'Loft', 'Circle', 'Extrude'), " +
+                        "'sdk' (component by GUID — use after search_gh_components), " +
+                        "'python3' (Python 3 script — LAST RESORT only if no native component can do the job). " +
+                        "Wires: 'id:paramIndex' (0-based) or 'id:paramName'. Sliders/toggles output index is always 0. " +
                         "Set solve:true to compute the solution after building.",
                     ["input_schema"] = new JObject
                     {
@@ -673,7 +672,7 @@ namespace PenguinClaw
                 case "scale_object":         return ScaleObject(S(input, "object_id"), D(input, "factor"),
                                                  D(input, "base_x"), D(input, "base_y"), D(input, "base_z"));
                 case "list_layers":          return ListLayers();
-case "list_gh_sliders":      return ListGhSliders();
+                case "list_gh_sliders":      return ListGhSliders();
                 case "list_gh_components":   return ListGhComponents();
                 case "search_gh_components":      return SearchGhComponents(S(input, "keyword"));
                 case "get_gh_component_params":   return GetGhComponentParams(S(input, "component_name"));

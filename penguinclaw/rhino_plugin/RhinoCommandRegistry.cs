@@ -17,6 +17,8 @@ namespace PenguinClaw
     {
         private static List<CachedTool> _cache = new List<CachedTool>();
         private static readonly object _lock = new object();
+        private static int _rhinoCount;
+        private static int _ghCount;
 
         // GH component GUID lookup for canvas insertion: toolName → component GUID string
         private static readonly Dictionary<string, string> _ghGuidMap = new Dictionary<string, string>();
@@ -29,9 +31,9 @@ namespace PenguinClaw
 
         // ── Public API ───────────────────────────────────────────────────────────
 
-        public static int CachedCount { get { lock (_lock) { return _cache.Count; } } }
-        public static int RhinoCommandCount { get { lock (_lock) { return _cache.Count(e => e.Definition["name"]?.ToString().StartsWith("rhino_cmd_") == true); } } }
-        public static int GhComponentCount  { get { lock (_lock) { return _cache.Count(e => e.Definition["name"]?.ToString().StartsWith("gh_comp_")   == true); } } }
+        public static int CachedCount       { get { lock (_lock) { return _cache.Count; } } }
+        public static int RhinoCommandCount { get { lock (_lock) { return _rhinoCount; } } }
+        public static int GhComponentCount  { get { lock (_lock) { return _ghCount; } } }
 
         /// <summary>Call from background thread on plugin load and after scan.</summary>
         public static void Build()
@@ -42,16 +44,19 @@ namespace PenguinClaw
             entries.AddRange(BuildRhinoCommandTools());
             entries.AddRange(BuildGhComponentTools(guidMap));
 
+            int rhinoCount = entries.Count(e => e.Definition["name"]?.ToString().StartsWith("rhino_cmd_") == true);
+            int ghCount    = entries.Count(e => e.Definition["name"]?.ToString().StartsWith("gh_comp_")   == true);
+
             lock (_lock)
             {
                 _cache = entries;
+                _rhinoCount = rhinoCount;
+                _ghCount    = ghCount;
                 _ghGuidMap.Clear();
                 foreach (var kv in guidMap)
                     _ghGuidMap[kv.Key] = kv.Value;
             }
 
-            var rhinoCount = entries.Count(e => e.Definition["name"]?.ToString().StartsWith("rhino_cmd_") == true);
-            var ghCount    = entries.Count(e => e.Definition["name"]?.ToString().StartsWith("gh_comp_")   == true);
             RhinoApp.WriteLine($"PenguinClaw: registry built — {rhinoCount} Rhino commands + {ghCount} GH components.");
         }
 
@@ -410,7 +415,7 @@ namespace PenguinClaw
             ["Hatch"]               = "Fills a closed curve boundary with a hatch pattern.",
             ["Text"]                = "Creates a text annotation object.",
             ["Leader"]              = "Creates an annotation leader with text.",
-            ["Polyline"]            = "Creates a polyline through clicked points.",
+            ["Polyline"]            = "Creates a polyline by clicking points. args: list of points e.g. '0,0,0 10,0,0 10,10,0'.",
             ["Line"]                = "Creates a straight line between two points.",
             ["Arc"]                 = "Creates an arc curve.",
             ["Circle"]              = "Creates a circle. args: '<center> <radius>' — e.g. '0,0,0 5'.",
@@ -422,7 +427,6 @@ namespace PenguinClaw
             ["Curve"]               = "Creates a free-form NURBS curve by clicking control points.",
             ["InterpCrv"]           = "Creates a curve that passes exactly through clicked points.",
             ["Points"]              = "Creates individual point objects.",
-            ["Polyline"]            = "Creates a polyline through clicked points.",
             ["SubD"]                = "Creates SubD (subdivision surface) geometry.",
             ["SubDBox"]             = "Creates a SubD box primitive.",
             ["SubDSphere"]          = "Creates a SubD sphere primitive.",
@@ -479,7 +483,6 @@ namespace PenguinClaw
             ["BlockEdit"]           = "Edits a block definition in place.",
             ["Block"]               = "Creates a block definition from selected objects.",
             ["Insert"]              = "Inserts a block instance or imports a file as a block.",
-            ["Explode"]             = "Explodes block instances or polysurfaces into components.",
         };
 
         private static readonly (string, string)[] _fallbackCommands =

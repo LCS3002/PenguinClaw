@@ -10,6 +10,7 @@ node_modules/
 dist/
 dist-ssr
 *.local
+my-app/
 
 # Build outputs
 penguinclaw/rhino_plugin/bin/
@@ -43,3 +44,4 @@ Thumbs.db
 *.docx
 *.pptx
 ARCHITECTURE.md
+plan.md

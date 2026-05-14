@@ -317,22 +317,32 @@ namespace PenguinClaw
 
             var toolCallsMade = new List<ToolCallRecord>();
             int malformedRecoveryCount = 0;
+            int totalInputTokens  = 0;
+            int totalOutputTokens = 0;
+            int totalCachedTokens = 0;
 
             for (int iter = 0; iter < MaxIter; iter++)
             {
                 if (cancellationToken.IsCancellationRequested)
-                    return new AgentResult { Response = "Operation cancelled.", ToolCalls = toolCallsMade };
+                    return new AgentResult { Response = "Operation cancelled.", ToolCalls = toolCallsMade,
+                        InputTokens = totalInputTokens, OutputTokens = totalOutputTokens, CachedTokens = totalCachedTokens };
 
                 var llmResp = provider.Send(BuildSystemPromptArray(), messages, tools, MaxTokens);
 
+                totalInputTokens  += llmResp.InputTokens;
+                totalOutputTokens += llmResp.OutputTokens;
+                totalCachedTokens += llmResp.CachedTokens;
+
                 if (llmResp.StopReason == "error")
-                    return new AgentResult { Response = llmResp.ErrorMessage, ToolCalls = toolCallsMade };
+                    return new AgentResult { Response = llmResp.ErrorMessage, ToolCalls = toolCallsMade,
+                        InputTokens = totalInputTokens, OutputTokens = totalOutputTokens, CachedTokens = totalCachedTokens };
 
                 if (llmResp.StopReason == "end_turn")
                 {
                     var finalText = string.IsNullOrEmpty(llmResp.Text) ? "(No response)" : llmResp.Text;
                     PenguinClawDebugLog.LogAgent(finalText);
-                    return new AgentResult { Response = finalText, ToolCalls = toolCallsMade };
+                    return new AgentResult { Response = finalText, ToolCalls = toolCallsMade,
+                        InputTokens = totalInputTokens, OutputTokens = totalOutputTokens, CachedTokens = totalCachedTokens };
                 }
 
                 if (llmResp.StopReason == "tool_use")
@@ -502,15 +512,21 @@ namespace PenguinClaw
                 // Unexpected stop reason
                 return new AgentResult
                 {
-                    Response  = string.IsNullOrEmpty(llmResp.Text) ? $"Stopped: {llmResp.StopReason}" : llmResp.Text,
-                    ToolCalls = toolCallsMade,
+                    Response      = string.IsNullOrEmpty(llmResp.Text) ? $"Stopped: {llmResp.StopReason}" : llmResp.Text,
+                    ToolCalls     = toolCallsMade,
+                    InputTokens   = totalInputTokens,
+                    OutputTokens  = totalOutputTokens,
+                    CachedTokens  = totalCachedTokens,
                 };
             }
 
             return new AgentResult
             {
-                Response  = "Stopped: reached maximum tool call iterations.",
-                ToolCalls = toolCallsMade,
+                Response      = "Stopped: reached maximum tool call iterations.",
+                ToolCalls     = toolCallsMade,
+                InputTokens   = totalInputTokens,
+                OutputTokens  = totalOutputTokens,
+                CachedTokens  = totalCachedTokens,
             };
         }
 
