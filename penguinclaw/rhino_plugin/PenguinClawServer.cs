@@ -1,4 +1,5 @@
 using System;
+using System.Collections.Concurrent;
 using System.IO;
 using System.Linq;
 using System.Net;
@@ -19,6 +20,11 @@ namespace PenguinClaw
 
         private static CancellationTokenSource _currentCts;
         private static readonly object _ctsLock = new object();
+
+        // Server-side conversation history keyed by session_id.
+        // Eliminates lossy cross-turn history reconstruction on the client.
+        private static readonly ConcurrentDictionary<string, JArray> _sessions
+            = new ConcurrentDictionary<string, JArray>();
 
         private const int Port = 8080;
 
@@ -198,8 +204,22 @@ namespace PenguinClaw
 
             PenguinClawDebugLog.LogUser(message);
 
-            var history = (data["history"] as JArray) ?? new JArray();
-            var doc     = RhinoDoc.ActiveDoc;
+            // Session management: server maintains canonical Anthropic-format history.
+            // Client sends session_id; falls back to client-provided history for compatibility.
+            var sessionId = data["session_id"]?.ToString();
+            JArray history;
+            if (!string.IsNullOrEmpty(sessionId) && _sessions.TryGetValue(sessionId, out var stored))
+            {
+                history = stored;
+            }
+            else
+            {
+                if (string.IsNullOrEmpty(sessionId))
+                    sessionId = Guid.NewGuid().ToString("N");
+                history = (data["history"] as JArray) ?? new JArray();
+            }
+
+            var doc = RhinoDoc.ActiveDoc;
 
             CancellationToken token;
             lock (_ctsLock)
@@ -217,9 +237,14 @@ namespace PenguinClaw
                 {
                     ["response"]   = $"Agent error: {ex.Message}",
                     ["tool_calls"] = new JArray(),
+                    ["session_id"] = sessionId,
                 }, 500);
                 return;
             }
+
+            // Persist canonical history server-side for next turn
+            if (result.UpdatedHistory != null)
+                _sessions[sessionId] = result.UpdatedHistory;
 
             var toolCallsJson = new JArray();
             foreach (var tc in result.ToolCalls)
@@ -232,11 +257,13 @@ namespace PenguinClaw
 
             WriteJson(resp, new JObject
             {
-                ["response"]      = result.Response,
-                ["tool_calls"]    = toolCallsJson,
-                ["input_tokens"]  = result.InputTokens,
-                ["output_tokens"] = result.OutputTokens,
-                ["cached_tokens"] = result.CachedTokens,
+                ["response"]       = result.Response,
+                ["tool_calls"]     = toolCallsJson,
+                ["input_tokens"]   = result.InputTokens,
+                ["output_tokens"]  = result.OutputTokens,
+                ["cached_tokens"]  = result.CachedTokens,
+                ["session_id"]     = sessionId,
+                ["history_length"] = result.UpdatedHistory?.Count ?? history.Count,
             });
         }
 

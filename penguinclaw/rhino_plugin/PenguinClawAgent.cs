@@ -5,6 +5,7 @@ using System.Text;
 using Newtonsoft.Json;
 using Newtonsoft.Json.Linq;
 using Rhino;
+using Rhino.Geometry;
 
 namespace PenguinClaw
 {
@@ -19,9 +20,10 @@ namespace PenguinClaw
     {
         public string Response              { get; set; }
         public List<ToolCallRecord> ToolCalls { get; set; }
-        public int InputTokens  { get; set; }
-        public int OutputTokens { get; set; }
-        public int CachedTokens { get; set; }
+        public int InputTokens    { get; set; }
+        public int OutputTokens   { get; set; }
+        public int CachedTokens   { get; set; }
+        public JArray UpdatedHistory { get; set; }
     }
 
     internal static class PenguinClawAgent
@@ -201,27 +203,44 @@ namespace PenguinClaw
         {
             try
             {
-                var obj      = JObject.Parse(resultJson);
-                var selected = obj["selected_objects"] as JArray;
-                if (selected == null || selected.Count == 0) return;
+                var obj = JObject.Parse(resultJson);
 
                 lock (_sceneLock)
                 {
-                    foreach (var item in selected)
+                    // execute_python_code returns created_ids (reliable object ID diff)
+                    var createdIds = obj["created_ids"] as JArray;
+                    if (createdIds != null)
                     {
-                        var id = item["id"]?.ToString();
-                        if (string.IsNullOrEmpty(id)) continue;
-                        var existing = _sceneObjects.FirstOrDefault(s => s.Id == id);
-                        if (existing != null)
-                            existing.CreatedBy = toolName;
-                        else
-                            _sceneObjects.Add(new SceneObject
-                            {
-                                Id        = id,
-                                Type      = item["type"]?.ToString() ?? "object",
-                                CreatedBy = toolName,
-                            });
+                        foreach (var token in createdIds)
+                        {
+                            var id = token?.ToString();
+                            if (string.IsNullOrEmpty(id)) continue;
+                            if (_sceneObjects.Any(s => s.Id == id)) continue;
+                            _sceneObjects.Add(new SceneObject { Id = id, Type = "object", CreatedBy = toolName });
+                        }
                     }
+
+                    // selection-based tools return selected_objects
+                    var selected = obj["selected_objects"] as JArray;
+                    if (selected != null)
+                    {
+                        foreach (var item in selected)
+                        {
+                            var id = item["id"]?.ToString();
+                            if (string.IsNullOrEmpty(id)) continue;
+                            var existing = _sceneObjects.FirstOrDefault(s => s.Id == id);
+                            if (existing != null)
+                                existing.CreatedBy = toolName;
+                            else
+                                _sceneObjects.Add(new SceneObject
+                                {
+                                    Id        = id,
+                                    Type      = item["type"]?.ToString() ?? "object",
+                                    CreatedBy = toolName,
+                                });
+                        }
+                    }
+
                     while (_sceneObjects.Count > 20)
                         _sceneObjects.RemoveAt(0);
                 }
@@ -234,7 +253,7 @@ namespace PenguinClaw
         /// prompt-cached by Anthropic. OpenAI-compatible providers flatten this to a
         /// single system message automatically.
         /// </summary>
-        private static JArray BuildSystemPromptArray()
+        private static JArray BuildSystemPromptArray(string docContext, int iter = -1)
         {
             var arr = new JArray();
 
@@ -257,12 +276,18 @@ namespace PenguinClaw
                 });
             }
 
-            // Block 3 — dynamic per-turn context: action log + scene state
+            // Block 3 — dynamic per-turn context: live doc snapshot + action log + scene state
             var sb = new StringBuilder();
+
+            if (!string.IsNullOrEmpty(docContext))
+                sb.Append(docContext);
 
             var logBlock = PenguinClawActionLog.GetContextBlock();
             if (!string.IsNullOrEmpty(logBlock))
+            {
+                if (sb.Length > 0) sb.Append("\n\n");
                 sb.Append(logBlock);
+            }
 
             lock (_sceneLock)
             {
@@ -275,10 +300,68 @@ namespace PenguinClaw
                 }
             }
 
+            if (iter >= 18)
+            {
+                var remaining = MaxIter - iter - 1;
+                if (sb.Length > 0) sb.Append("\n\n");
+                sb.AppendLine("## Iteration budget");
+                sb.AppendLine($"You have used {iter + 1}/{MaxIter} iterations. {remaining} remain.");
+                sb.AppendLine(remaining <= 3
+                    ? "STOP planning. Complete your current step and give your FINAL response to the user NOW."
+                    : "Wrap up your current approach and give your final response within the next few steps.");
+            }
+
             if (sb.Length > 0)
                 arr.Add(new JObject { ["type"] = "text", ["text"] = sb.ToString() });
 
             return arr;
+        }
+
+        /// <summary>
+        /// Reads live document metadata on the UI thread and returns a compact context block
+        /// (~100–150 tokens) so the model knows units, object count, layers, and scene extents
+        /// without needing a tool call to orient itself.
+        /// </summary>
+        private static string BuildDocumentContextBlock(RhinoDoc doc)
+        {
+            if (doc == null) return null;
+
+            string result = null;
+            var done = new System.Threading.ManualResetEventSlim(false);
+            RhinoApp.InvokeOnUiThread(new Action(() =>
+            {
+                try
+                {
+                    var sb = new StringBuilder();
+                    sb.AppendLine("## Live document context");
+                    sb.AppendLine($"- Document: {(string.IsNullOrEmpty(doc.Name) ? "(untitled)" : doc.Name)}");
+                    sb.AppendLine($"- Units: {doc.ModelUnitSystem}");
+
+                    var objCount = doc.Objects.Count;
+                    sb.AppendLine($"- Objects: {objCount} total");
+
+                    var layerNames = new List<string>();
+                    foreach (var layer in doc.Layers)
+                        if (!layer.IsDeleted) layerNames.Add(layer.Name);
+                    if (layerNames.Count > 0)
+                        sb.AppendLine($"- Layers: {string.Join(", ", layerNames.Take(12))}{(layerNames.Count > 12 ? $" (+{layerNames.Count - 12})" : "")}");
+
+                    if (objCount > 0)
+                    {
+                        var bbox = BoundingBox.Empty;
+                        foreach (var obj in doc.Objects)
+                            if (obj.Geometry != null) bbox.Union(obj.Geometry.GetBoundingBox(false));
+                        if (bbox.IsValid)
+                            sb.AppendLine($"- Scene extents: X {bbox.Min.X:F1}–{bbox.Max.X:F1}, Y {bbox.Min.Y:F1}–{bbox.Max.Y:F1}, Z {bbox.Min.Z:F1}–{bbox.Max.Z:F1}");
+                    }
+
+                    result = sb.ToString();
+                }
+                catch { }
+                finally { done.Set(); }
+            }));
+            done.Wait(1500);
+            return result;
         }
 
         // ── Main entry point ─────────────────────────────────────────────────
@@ -294,6 +377,9 @@ namespace PenguinClaw
                 return Error("No AI provider configured. Open Settings to choose a provider and add your API key.");
 
             var provider = LlmProviderFactory.Create(cfg);
+
+            // Snapshot live document context once — injected into every system prompt in this turn
+            var docContext = BuildDocumentContextBlock(doc);
 
             // Base tools (stable, prompt-cached for Anthropic), dynamic tools appended
             var baseTools    = PenguinClawTools.GetToolDefinitions();
@@ -320,6 +406,8 @@ namespace PenguinClaw
             int totalInputTokens  = 0;
             int totalOutputTokens = 0;
             int totalCachedTokens = 0;
+            // Loop detection: track (name+argsHash) set from previous tool_use block
+            var prevIterSigs = new HashSet<string>();
 
             for (int iter = 0; iter < MaxIter; iter++)
             {
@@ -327,7 +415,7 @@ namespace PenguinClaw
                     return new AgentResult { Response = "Operation cancelled.", ToolCalls = toolCallsMade,
                         InputTokens = totalInputTokens, OutputTokens = totalOutputTokens, CachedTokens = totalCachedTokens };
 
-                var llmResp = provider.Send(BuildSystemPromptArray(), messages, tools, MaxTokens);
+                var llmResp = provider.Send(BuildSystemPromptArray(docContext, iter), messages, tools, MaxTokens);
 
                 totalInputTokens  += llmResp.InputTokens;
                 totalOutputTokens += llmResp.OutputTokens;
@@ -342,7 +430,8 @@ namespace PenguinClaw
                     var finalText = string.IsNullOrEmpty(llmResp.Text) ? "(No response)" : llmResp.Text;
                     PenguinClawDebugLog.LogAgent(finalText);
                     return new AgentResult { Response = finalText, ToolCalls = toolCallsMade,
-                        InputTokens = totalInputTokens, OutputTokens = totalOutputTokens, CachedTokens = totalCachedTokens };
+                        InputTokens = totalInputTokens, OutputTokens = totalOutputTokens, CachedTokens = totalCachedTokens,
+                        UpdatedHistory = messages };
                 }
 
                 if (llmResp.StopReason == "tool_use")
@@ -353,8 +442,12 @@ namespace PenguinClaw
                         if (malformedRecoveryCount >= 2)
                             return new AgentResult
                             {
-                                Response  = llmResp.Text ?? "Model indicated tool use but provided no tool calls.",
-                                ToolCalls = toolCallsMade,
+                                Response       = llmResp.Text ?? "Model indicated tool use but provided no tool calls.",
+                                ToolCalls      = toolCallsMade,
+                                UpdatedHistory = messages,
+                                InputTokens    = totalInputTokens,
+                                OutputTokens   = totalOutputTokens,
+                                CachedTokens   = totalCachedTokens,
                             };
 
                         malformedRecoveryCount++;
@@ -371,6 +464,21 @@ namespace PenguinClaw
                         PenguinClawActionLog.RecordMalformedCall(cfg.Provider ?? "unknown");
                         continue;
                     }
+
+                    // Loop detection: same (name+args) set as last iteration = model is stuck
+                    var currentSigs = new HashSet<string>(
+                        llmResp.ToolCalls.Select(tc =>
+                            tc.Name + ":" + tc.Input.ToString(Formatting.None).GetHashCode()));
+                    if (currentSigs.Count > 0 && currentSigs.SetEquals(prevIterSigs))
+                    {
+                        messages.Add(new JObject { ["role"] = "user",
+                            ["content"] = "You just called the exact same tool(s) with the same arguments as the previous step. " +
+                                          "This is a loop — the tools are not going to return a different result. " +
+                                          "Stop repeating this call. Either try a completely different approach, or if you are done, give your final response now." });
+                        prevIterSigs.Clear();
+                        continue;
+                    }
+                    prevIterSigs = currentSigs;
 
                     // Reconstruct Anthropic-format assistant message (internal canonical format)
                     var assistantContent = new JArray();
@@ -512,21 +620,23 @@ namespace PenguinClaw
                 // Unexpected stop reason
                 return new AgentResult
                 {
-                    Response      = string.IsNullOrEmpty(llmResp.Text) ? $"Stopped: {llmResp.StopReason}" : llmResp.Text,
-                    ToolCalls     = toolCallsMade,
-                    InputTokens   = totalInputTokens,
-                    OutputTokens  = totalOutputTokens,
-                    CachedTokens  = totalCachedTokens,
+                    Response       = string.IsNullOrEmpty(llmResp.Text) ? $"Stopped: {llmResp.StopReason}" : llmResp.Text,
+                    ToolCalls      = toolCallsMade,
+                    InputTokens    = totalInputTokens,
+                    OutputTokens   = totalOutputTokens,
+                    CachedTokens   = totalCachedTokens,
+                    UpdatedHistory = messages,
                 };
             }
 
             return new AgentResult
             {
-                Response      = "Stopped: reached maximum tool call iterations.",
-                ToolCalls     = toolCallsMade,
-                InputTokens   = totalInputTokens,
-                OutputTokens  = totalOutputTokens,
-                CachedTokens  = totalCachedTokens,
+                Response       = "Stopped: reached maximum tool call iterations.",
+                ToolCalls      = toolCallsMade,
+                InputTokens    = totalInputTokens,
+                OutputTokens   = totalOutputTokens,
+                CachedTokens   = totalCachedTokens,
+                UpdatedHistory = messages,
             };
         }
 

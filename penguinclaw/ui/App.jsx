@@ -351,11 +351,9 @@ export default function PenguinClaw() {
   const [messages, setMessages] = useState(() => {
     try { return JSON.parse(localStorage.getItem("pc_messages") || "[]"); } catch { return []; }
   });
-  const [input, setInput]     = useState("");
-  const [history, setHistory] = useState(() => {
-    try { return JSON.parse(localStorage.getItem("pc_history") || "[]"); } catch { return []; }
-  });
-  const [tools, setTools]   = useState([]);
+  const [input, setInput]       = useState("");
+  const [sessionId, setSessionId] = useState(null);
+  const [tools, setTools]       = useState([]);
   const [health, setHealth] = useState({
     fetch_ok: false, rhino_connected: false, document_open: false,
     ai_configured: false, tools_loaded: 0, provider: "anthropic",
@@ -374,7 +372,6 @@ export default function PenguinClaw() {
   useEffect(() => { chatEndRef.current?.scrollIntoView({ behavior: "smooth" }); }, [messages, isTyping]);
   useEffect(() => { if (tab === "log") logEndRef.current?.scrollIntoView({ behavior: "smooth" }); }, [logEntries, tab]);
   useEffect(() => { try { localStorage.setItem("pc_messages", JSON.stringify(messages)); } catch {} }, [messages]);
-  useEffect(() => { try { localStorage.setItem("pc_history",  JSON.stringify(history));  } catch {} }, [history]);
 
   useEffect(() => {
     let alive = true;
@@ -453,12 +450,14 @@ export default function PenguinClaw() {
       const r = await fetch(`${API_BASE}/chat`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ message: msg, history }),
+        body: JSON.stringify({ message: msg, session_id: sessionId }),
         signal: ctrl.signal,
       });
       const d = await r.json();
       setIsTyping(false);
       setAbortCtrl(null);
+
+      if (d.session_id) setSessionId(d.session_id);
 
       const hasVision = d.tool_calls?.some(t => t.name === "capture_and_assess");
       setVisionActive(hasVision || false);
@@ -473,14 +472,6 @@ export default function PenguinClaw() {
         inputTokens:  p.inputTokens  + (d.input_tokens  || 0),
         outputTokens: p.outputTokens + (d.output_tokens || 0),
       }));
-
-      const toolSummary = d.tool_calls?.length
-        ? "\n[Tools used: " + d.tool_calls.map(t => t.name).join(", ") + "]"
-        : "";
-      setHistory(p => [...p,
-        { role: "user",      content: msg },
-        { role: "assistant", content: (d.response || "") + toolSummary },
-      ]);
     } catch (err) {
       setIsTyping(false);
       setAbortCtrl(null);
@@ -630,7 +621,7 @@ export default function PenguinClaw() {
                 ) : (
                   <button onClick={sendMessage} style={{ background: `linear-gradient(135deg, ${C.orange}, ${C.orangeDim})`, border: "none", borderRadius: "7px", padding: "8px 12px", color: C.white, cursor: "pointer", fontSize: "14px", fontWeight: 700, flexShrink: 0 }}>↑</button>
                 )}
-                <button onClick={() => { setMessages([]); setHistory([]); setTurnStats({ turn: 0, inputTokens: 0, outputTokens: 0 }); }} title="Clear conversation" style={{ background: "none", border: `1px solid ${C.gray300}`, borderRadius: "7px", padding: "8px 10px", color: C.gray500, cursor: "pointer", fontSize: "12px", flexShrink: 0 }}>✕</button>
+                <button onClick={() => { setMessages([]); setSessionId(null); setTurnStats({ turn: 0, inputTokens: 0, outputTokens: 0 }); }} title="Clear conversation" style={{ background: "none", border: `1px solid ${C.gray300}`, borderRadius: "7px", padding: "8px 10px", color: C.gray500, cursor: "pointer", fontSize: "12px", flexShrink: 0 }}>✕</button>
               </div>
             </div>
           </>)}

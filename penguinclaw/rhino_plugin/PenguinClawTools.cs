@@ -1248,7 +1248,7 @@ namespace PenguinClaw
                 }
 
                 return result;
-            });
+            }, timeoutSeconds: 8);
         }
 
         private static string GetDocumentSummary()
@@ -1387,6 +1387,9 @@ namespace PenguinClaw
                 var doc = RhinoDoc.ActiveDoc;
                 if (doc == null) return new JObject { ["success"] = false, ["message"] = "No active Rhino document." };
 
+                // Snapshot existing object IDs so we can report what was created
+                var beforeIds = new HashSet<Guid>(doc.Objects.Where(o => !o.IsDeleted).Select(o => o.Id));
+
                 // Ensure IronPython plugin is loaded — Create() returns null without it
                 try { Rhino.PlugIns.PlugIn.LoadPlugIn(IronPythonPluginId.ToString(), out _); }
                 catch { /* non-fatal — try anyway */ }
@@ -1466,11 +1469,19 @@ namespace PenguinClaw
 
                 doc.Views.Redraw();
 
+                // Diff against pre-execution snapshot — gives the agent reliable created IDs
+                // without relying on the model to parse print() output
+                var createdIds = new JArray();
+                foreach (var obj in doc.Objects)
+                    if (!obj.IsDeleted && !beforeIds.Contains(obj.Id))
+                        createdIds.Add(obj.Id.ToString());
+
                 var result = new JObject
                 {
                     ["success"] = ok,
                     ["output"]  = output.ToString().TrimEnd(),
                 };
+                if (createdIds.Count > 0) result["created_ids"] = createdIds;
                 if (!string.IsNullOrEmpty(errorMsg))  result["error"]     = errorMsg;
                 if (!string.IsNullOrEmpty(traceback)) result["traceback"] = traceback;
                 return result;
@@ -2512,7 +2523,7 @@ namespace PenguinClaw
 
         // ── Thread dispatch ──────────────────────────────────────────────────────
 
-        private static string OnMain(Func<JObject> action)
+        private static string OnMain(Func<JObject> action, int timeoutSeconds = 30)
         {
             JObject result = null;
             Exception err  = null;
@@ -2525,12 +2536,29 @@ namespace PenguinClaw
                 finally { done.Set(); }
             }));
 
-            done.Wait(TimeSpan.FromSeconds(30));
+            if (!done.Wait(TimeSpan.FromSeconds(timeoutSeconds)))
+            {
+                // Rhino is probably waiting for interactive point/object input.
+                // Post Escape to unblock it — this works when Rhino's message loop is still running.
+                RhinoApp.InvokeOnUiThread(new Action(() =>
+                {
+                    try { RhinoApp.RunScript("_Escape", false); } catch { }
+                }));
+                done.Wait(TimeSpan.FromSeconds(3));
+
+                if (result == null)
+                    return new JObject
+                    {
+                        ["success"] = false,
+                        ["message"] = "Command timed out — Rhino was waiting for interactive input (point pick or object selection). " +
+                                      "Press Escape if the command line is still active. " +
+                                      "Use execute_python_code with rhinoscriptsyntax, or a dedicated tool (move_object, scale_object, etc.) instead.",
+                    }.ToString(Formatting.None);
+            }
 
             if (err    != null) return new JObject { ["success"] = false, ["message"] = err.Message }.ToString(Formatting.None);
             if (result == null) return new JObject { ["success"] = false, ["message"] = "Operation timed out." }.ToString(Formatting.None);
 
-            // Only set success=true if the action did not already set it to false explicitly
             if (result["success"] == null)
                 result["success"] = true;
             return result.ToString(Formatting.None);
